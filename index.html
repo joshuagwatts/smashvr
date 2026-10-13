@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>SMASHVR — platform fighter prototype</title>
+<link rel="stylesheet" href="./css/style.css">
+<script type="importmap">
+{ "imports": {
+    "three": "./js/vendor/three.module.js",
+    "three/addons/": "./js/vendor/three_addons/",
+    "@pixiv/three-vrm": "./js/vendor/three-vrm.module.min.js"
+} }
+</script>
+</head>
+<body>
+<div id="game"></div>
+
+<!-- ============ TITLE ============ -->
+<div id="screen-title" class="screen">
+  <div class="panel">
+    <h1 class="logo">SMASH<span>VR</span></h1>
+    <p class="subtitle">platform fighter prototype v0.1</p>
+    <div class="btn-col">
+      <button id="btn-1p" class="btn big">1P vs CPU</button>
+      <button id="btn-2p" class="btn big">2P Versus</button>
+      <button id="btn-lab" class="btn">Fighter Lab</button>
+      <label class="btn file-btn">Import VRM for P1
+        <input type="file" id="vrm-file" accept=".vrm" hidden>
+      </label>
+    </div>
+    <div class="controls-card">
+      <div>
+        <h3>P1</h3>
+        <p><b>A</b>/<b>D</b> move &nbsp; <b>W</b> jump &nbsp; <b>S</b> crouch</p>
+        <p><b>J</b> attack &nbsp; <b>K</b> smash &nbsp; <b>L</b> special &nbsp; <b>Space</b> shield</p>
+      </div>
+      <div>
+        <h3>P2</h3>
+        <p><b>&#8592;</b>/<b>&#8594;</b> move &nbsp; <b>&#8593;</b> jump &nbsp; <b>&#8595;</b> crouch</p>
+        <p><b>Num1</b> attack &nbsp; <b>Num3</b> smash &nbsp; <b>Num2</b> special &nbsp; <b>Num0</b> shield</p>
+      </div>
+    </div>
+    <p class="hint">Esc / P pauses mid-fight</p>
+  </div>
+</div>
+
+<!-- ============ FIGHTER SELECT ============ -->
+<div id="screen-select" class="screen hidden">
+  <div class="panel">
+    <h2 id="select-title">Choose your fighter</h2>
+    <h3 class="sel-label">P1 <span id="p1-mode-tag"></span></h3>
+    <div class="cards" id="p1-cards"></div>
+    <h3 class="sel-label" id="p2-label">CPU</h3>
+    <div class="cards" id="p2-cards"></div>
+    <div class="btn-row">
+      <button id="btn-back" class="btn ghost">&#8592; Back</button>
+      <button id="btn-start" class="btn big">START FIGHT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" class="hidden">
+  <div class="hud-side left">
+    <div class="hud-name" id="hud-p1-name">P1</div>
+    <div class="hud-pct" id="hud-p1-pct">0%</div>
+    <div class="hud-stocks" id="hud-p1-stocks"></div>
+  </div>
+  <div class="hud-center">
+    <div class="hud-timer" id="hud-timer">5:00</div>
+    <div class="hud-pause-hint">Esc pause</div>
+  </div>
+  <div class="hud-side right">
+    <div class="hud-name" id="hud-p2-name">P2</div>
+    <div class="hud-pct" id="hud-p2-pct">0%</div>
+    <div class="hud-stocks" id="hud-p2-stocks"></div>
+  </div>
+</div>
+<div id="hud-countdown" class="hidden"></div>
+
+<!-- ============ PAUSE ============ -->
+<div id="screen-pause" class="screen hidden">
+  <div class="panel small">
+    <h2>PAUSED</h2>
+    <div class="btn-col">
+      <button id="btn-resume" class="btn big">Resume</button>
+      <button id="btn-quit" class="btn ghost">Quit to title</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ RESULTS ============ -->
+<div id="screen-results" class="screen hidden">
+  <div class="panel small">
+    <h2 id="results-winner">RONIN WINS</h2>
+    <p class="subtitle" id="results-sub"></p>
+    <div class="btn-col">
+      <button id="btn-rematch" class="btn big">Rematch</button>
+      <button id="btn-results-title" class="btn ghost">Quit to title</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fighter Lab overlay (built by lab.js) -->
+<div id="lab-overlay" class="hidden"></div>
+
+<div id="toast" class="hidden"></div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
