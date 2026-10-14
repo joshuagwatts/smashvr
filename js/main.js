@@ -7,7 +7,7 @@ import { Input } from './input.js';
 import { sfx } from './audio.js';
 import { createFighter } from './fighters.js';
 import { FIGHTER_DEFS } from './moves.js';
-import { loadVRMFile, attachVRMToFighter, removeVRMFromFighter } from './vrm.js';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js';
 import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData } from './roster.js';
 import { openLab } from './lab.js';
 import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js';
