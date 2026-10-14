@@ -50,10 +50,18 @@ export function createFighter(defId) {
     }
   }
 
+  // v0.6: body type — Lab override ('smashvr_bodytype_<defId>': auto/biped/floater)
+  // wins; otherwise the def's native type. Drives hover locomotion + rig choice.
+  const btOverride = loadJSON('smashvr_bodytype_' + defId, 'auto');
+  const bodyType = (btOverride === 'biped' || btOverride === 'floater')
+    ? btOverride
+    : (def.bodyType || 'biped');
+
   return {
     defId,
     name: def.name,
     cls: def.cls,
+    bodyType,
     theme,
     weight: def.weight,
     runSpeed: def.runSpeed,

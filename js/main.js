@@ -111,10 +111,12 @@ function defCard(defId, group) {
   el.dataset.def = defId;
   el.dataset.group = group;
   const cls = f ? f.cls.toUpperCase() : '?';
+  // v0.6: body type on the card so floaters are visible at select time
+  const bt = f ? (f.bodyType === 'floater' ? ' · FLOATER' : '') : '';
   const c1 = f ? '#' + new THREE.Color(f.theme.primary).getHexString() : '#555';
   const c2 = f ? '#' + new THREE.Color(f.theme.secondary).getHexString() : '#777';
   el.innerHTML = `<div class="fname">${defId.toUpperCase()}</div>
-    <div class="fclass">${cls}</div>
+    <div class="fclass">${cls}${bt}</div>
     <div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})"></div>`;
   el.addEventListener('click', () => {
     sfx.uiMove();
@@ -127,10 +129,11 @@ function defCard(defId, group) {
 function refreshCards() {
   const g1 = $('p1-cards'), g2 = $('p2-cards');
   g1.innerHTML = ''; g2.innerHTML = '';
-  g1.appendChild(defCard('ronin', 1));
-  g1.appendChild(defCard('volt', 1));
-  g2.appendChild(defCard('ronin', 2));
-  g2.appendChild(defCard('volt', 2));
+  // v0.6: cards built from the live def list (ronin/volt/wisp/...)
+  for (const d of Object.keys(FIGHTER_DEFS)) {
+    g1.appendChild(defCard(d, 1));
+    g2.appendChild(defCard(d, 2));
+  }
 }
 
 function openSelect(m) {
@@ -182,6 +185,12 @@ function startFight(p1def, p2def, m, isDemo = false) {
   if (pendingVRM) {
     try {
       attachVRMToFighter(game.fighters[0], pendingVRM);
+      // v0.6: imported body type drives hover locomotion — unless the Lab's
+      // manual override for this def says otherwise (override wins, no re-import).
+      const ov = readBodyTypeOverride(p1def);
+      if (pendingVRM.autorig && pendingVRM.autorig.bodyType && (!ov || ov === 'auto')) {
+        game.fighters[0].bodyType = pendingVRM.autorig.bodyType;
+      }
       toast('VRM attached to P1');
     } catch (err) { toast('VRM attach failed: ' + err.message, true); }
   }
@@ -244,6 +253,13 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---- VRM import for P1 ----
+function readBodyTypeOverride(defId) {
+  try {
+    const s = localStorage.getItem('smashvr_bodytype_' + defId);
+    return s || 'auto';
+  } catch (e) { return 'auto'; }
+}
+
 $('vrm-file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
@@ -254,6 +270,16 @@ $('vrm-file').addEventListener('change', async (e) => {
       pendingVRM.autorig ? pendingVRM.autorig.notice : 'VRM loaded — attaches to P1 on fight start',
       pendingVRM.autorig ? !pendingVRM.autorig.ok : false
     );
+    // v0.6: body-type badge under the import button
+    const st = $('import-status');
+    if (st) {
+      if (pendingVRM.autorig && pendingVRM.autorig.bodyType) {
+        const bt = pendingVRM.autorig.bodyType;
+        st.textContent = `P1 avatar: ${bt === 'floater' ? 'Floater — hover locomotion' : 'Biped'} (auto-detected)`;
+      } else {
+        st.textContent = 'P1 avatar: VRM humanoid';
+      }
+    }
     sfx.select();
   } catch (err) {
     toast('VRM load failed: ' + err.message, true);

@@ -16,7 +16,7 @@ import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget
 import { createFighter } from './fighters.js';
 import { tickFighterVisual, setFighterTheme } from './anim.js';
 
-const OTHER = { ronin: 'volt', volt: 'ronin' };
+const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 
 function loadJSON(key, fallback) {
   try {
@@ -110,7 +110,8 @@ export function openLab(containerEl, onClose) {
   const defRow = el('div');
   css(defRow, { display: 'flex', gap: '8px', marginBottom: '10px' });
   const defBtns = {};
-  for (const d of ['ronin', 'volt']) {
+  // v0.6: buttons built from the live def list (ronin/volt/wisp/...)
+  for (const d of Object.keys(FIGHTER_DEFS)) {
     const b = el('button', FIGHTER_DEFS[d].name);
     css(b, { flex: '1', padding: '8px', borderRadius: '8px', cursor: 'pointer', border: '1px solid #3a4157', background: '#232838', color: '#e8ecf4', fontWeight: '700', letterSpacing: '1px' });
     b.onclick = () => switchDef(d);
@@ -122,6 +123,47 @@ export function openLab(containerEl, onClose) {
   const classLine = el('div');
   css(classLine, { fontSize: '12px', color: '#9aa3b8', marginBottom: '10px' });
   leftCol.appendChild(classLine);
+
+  // v0.6: body-type badge + manual override (Auto / Biped / Floater).
+  // Override persists per def and toggles locomotion without re-import.
+  const btRow = el('div');
+  css(btRow, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', fontSize: '12px', color: '#9aa3b8' });
+  const btBadge = el('span', '');
+  css(btBadge, { padding: '3px 10px', borderRadius: '20px', fontWeight: '700', letterSpacing: '1px', fontSize: '11px' });
+  const btSel = document.createElement('select');
+  css(btSel, { padding: '5px 8px', borderRadius: '6px', background: '#232838', color: '#e8ecf4', border: '1px solid #3a4157', fontSize: '12px' });
+  for (const [v, label] of [['auto', 'Auto'], ['biped', 'Biped'], ['floater', 'Floater']]) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    btSel.appendChild(o);
+  }
+  btSel.onchange = () => {
+    saveJSON('smashvr_bodytype_' + defId, btSel.value);
+    rebuildPreview();
+    renderBodyType();
+    say(btSel.value === 'auto'
+      ? 'Body type: auto-detect.'
+      : `Body type overridden to ${btSel.value} — applies on next fight.`, true);
+  };
+  btRow.appendChild(el('span', 'Body type:'));
+  btRow.appendChild(btBadge);
+  btRow.appendChild(btSel);
+  leftCol.appendChild(btRow);
+
+  function effectiveBodyType() {
+    const ov = loadJSON('smashvr_bodytype_' + defId, 'auto');
+    return (ov === 'biped' || ov === 'floater') ? { type: ov, auto: false } : { type: FIGHTER_DEFS[defId].bodyType || 'biped', auto: true };
+  }
+  function renderBodyType() {
+    const { type, auto } = effectiveBodyType();
+    btSel.value = loadJSON('smashvr_bodytype_' + defId, 'auto');
+    btBadge.textContent = (type === 'floater' ? 'FLOATER' : 'BIPED') + (auto ? ' (auto)' : ' (override)');
+    css(btBadge, {
+      background: type === 'floater' ? '#5e7bff33' : '#43d17c33',
+      color: type === 'floater' ? '#b9f3ff' : '#43d17c',
+      border: `1px solid ${type === 'floater' ? '#5e7bff' : '#43d17c'}`,
+    });
+  }
 
   const themeRow = el('div');
   css(themeRow, { display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '10px' });
@@ -268,10 +310,11 @@ export function openLab(containerEl, onClose) {
     budgetFill.style.width = pct + '%';
     budgetFill.style.background = v.ok ? '#43d17c' : '#e23b2e';
     classLine.textContent = `${FIGHTER_DEFS[defId].name} — ${cls()} class — per-move cap ${fmt(moveCap(cls()))} pts`;
-    for (const d of ['ronin', 'volt']) {
+    for (const d of Object.keys(FIGHTER_DEFS)) {
       const on = d === defId;
       css(defBtns[d], { background: on ? '#3b82f6' : '#232838', borderColor: on ? '#3b82f6' : '#3a4157' });
     }
+    renderBodyType();
   }
 
   function renderAll() {

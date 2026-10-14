@@ -7,7 +7,7 @@ import { moveCost } from './budget.js';
 
 export const FIGHTER_DEFS = {
   ronin: {
-    name: 'RONIN', cls: 'mid',
+    name: 'RONIN', cls: 'mid', bodyType: 'biped',
     weight: 100, runSpeed: 0.13, airSpeed: 0.11, fallSpeed: 0.25, fastFall: 0.46,
     jumpV: 0.22, djumpV: 0.20, traction: 0.6,
     theme: { primary: '#e23b2e', secondary: '#ffb13d' },
@@ -15,12 +15,24 @@ export const FIGHTER_DEFS = {
     altTheme: { primary: '#2ee2a8', secondary: '#f2f5f7' },
   },
   volt: {
-    name: 'VOLT', cls: 'heavy',
+    name: 'VOLT', cls: 'heavy', bodyType: 'biped',
     weight: 114, runSpeed: 0.15, airSpeed: 0.12, fallSpeed: 0.28, fastFall: 0.52,
     jumpV: 0.21, djumpV: 0.19, traction: 0.55,
     theme: { primary: '#2e9be2', secondary: '#7df9ff' },
     // v0.3 mirror match: P2 alt palette (orange + pale yellow) when both sides pick volt
     altTheme: { primary: '#e27a2e', secondary: '#ffe27d' },
+  },
+  // v0.6: WISP — floating ghost type. No legs; glides instead of running,
+  // floaty low-grav jumps (the Jigglypuff archetype). Runs the VOLT kit —
+  // the fast kit suits a ghost. Kick moves work mechanically (positional
+  // hitboxes) but have no leg visuals — honest v1 gap.
+  wisp: {
+    name: 'WISP', cls: 'light', bodyType: 'floater',
+    weight: 82, runSpeed: 0.14, airSpeed: 0.135, fallSpeed: 0.16, fastFall: 0.38,
+    jumpV: 0.20, djumpV: 0.18, traction: 0.65,
+    theme: { primary: '#b9f3ff', secondary: '#5e7bff' },
+    // v0.6 mirror match alt: deep violet + pale mist
+    altTheme: { primary: '#8b5cf6', secondary: '#e6f9ff' },
   },
 };
 
@@ -468,4 +480,9 @@ const volt = {
   }),
 };
 
-export const MOVES = { ronin, volt };
+// v0.6: WISP runs the VOLT kit (fast kit suits a ghost). Cloned with wisp_
+// ids so the Lab's isNative() check treats them as native (free, not stolen).
+const wisp = {};
+for (const s of SLOTS) wisp[s] = { ...volt[s], id: 'wisp_' + s };
+
+export const MOVES = { ronin, volt, wisp };

@@ -261,7 +261,8 @@ export function createGame(opts) {
         if (!f.root) continue;
         const rx = f._ppx + (f.x - f._ppx) * alpha;
         const ry = f._ppy + (f.y - f._ppy) * alpha;
-        f.root.position.set(rx, ry, 0);
+        // v0.6: hover bob rides on the interpolated position for floaters
+        f.root.position.set(rx, ry + hoverBob(f), 0);
         if (f._portRing) f._portRing.position.set(rx, 0.02, 0);
       }
       cp.x = this._camPx + (cp.x - this._camPx) * alpha;
@@ -383,8 +384,15 @@ function buildStage(scene) {
   return g;
 }
 
+// v0.6: floaters hover — gentle sinusoidal bob applied to the VISUAL root
+// only (the physics anchor f.y is untouched, so landing/ledge/blast math is
+// identical). Freezes during hitstop because _animT stops advancing there.
+function hoverBob(f) {
+  return f.bodyType === 'floater' ? Math.sin((f._animT || 0) * 3.4) * 0.06 : 0;
+}
+
 function syncRoot(f) {
-  f.root.position.set(f.x, f.y, 0);
+  f.root.position.set(f.x, f.y + hoverBob(f), 0);
   f.root.scale.x = f.facing; // face the model toward f.facing
   f.root.scale.y = 1; f.root.scale.z = 1;
   if (f._portRing) f._portRing.position.set(f.x, 0.02, 0); // v0.3 colors: ring tracks fighter x/z
@@ -482,7 +490,9 @@ function stepFighter(game, f, cur, foe) {
       // S64-like: you can still air-drift after your up-B (needed for recovery)
       {
         const hdir = (e.right ? 1 : 0) - (e.left ? 1 : 0);
-        const tgt = hdir * f.airSpeed;
+        // v0.6: floaters keep their drift bonus while helpless
+        const hasp = f.bodyType === 'floater' ? f.airSpeed * 1.15 : f.airSpeed;
+        const tgt = hdir * hasp;
         const dd = tgt - f.vx;
         f.vx += Math.sign(dd) * Math.min(Math.abs(dd), 0.35);
       }
@@ -541,10 +551,15 @@ function stepFighter(game, f, cur, foe) {
 }
 
 function physics(game, f) {
-  f.vy -= GRAV;
+  // v0.6: floaters get low-grav hover physics (the Jigglypuff archetype):
+  // gravity x0.55 while airborne, lower fall-speed cap, touch more air drift.
+  // Fall time from a jump apex runs ~1.4x a biped's.
+  const grav = f.bodyType === 'floater' ? GRAV * 0.55 : GRAV;
+  f.vy -= grav;
   // Terminal-velocity cap: skipped during hitstun so launch trajectories are
   // never truncated (a strong launch legitimately exceeds fall speed).
-  const cap = f._fastFalling ? f.fastFall : f.fallSpeed;
+  const cap = f._fastFalling ? f.fastFall
+    : (f.bodyType === 'floater' ? f.fallSpeed * 0.62 : f.fallSpeed);
   if (f.state !== 'hitstun' && f.vy < -cap) f.vy = -cap;
 
   const px = f.x, py = f.y;
@@ -638,7 +653,9 @@ function stepControl(game, f, e) {
       setState(f, 'idle');
     }
   } else {
-    const tgt = dir * f.airSpeed;
+    // v0.6: floaters drift a touch more in the air
+    const asp = f.bodyType === 'floater' ? f.airSpeed * 1.15 : f.airSpeed;
+    const tgt = dir * asp;
     const d = tgt - f.vx;
     f.vx += Math.sign(d) * Math.min(Math.abs(d), 0.35);
     setState(f, f.vy > 0.5 ? 'jump' : 'fall');
@@ -1096,9 +1113,11 @@ function stepAttack(game, f, e, foe) {
 // reaches the blast line counts). Used to trigger the KO-blow freeze.
 function predictKO(def, lvx, lvy, hs) {
   let x = def.x, y = def.y, vx = lvx, vy = lvy;
+  // v0.6: simulate with the victim's own gravity (floaters fall slower)
+  const grav = def.bodyType === 'floater' ? GRAV * 0.55 : GRAV;
   for (let i = 0; i < hs; i++) {
     x += vx; y += vy;
-    vx *= TUNING.HITSTUN_DRAG; vy -= GRAV;
+    vx *= TUNING.HITSTUN_DRAG; vy -= grav;
     if (Math.abs(x) > BLAST.x || y > BLAST.top || y < BLAST.bottom) return true;
     if (vy < 0 && y <= STAGE.top && Math.abs(x) <= STAGE.x1 + 0.15) {
       const slide = Math.abs(vx) / (1 - TUNING.HITSTUN_DRAG);

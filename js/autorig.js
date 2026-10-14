@@ -95,39 +95,58 @@ export function autoRigScene(scene) {
   // ---- 3. joint fitting ----
   const warnings = [];
 
-  // torso half-width: the torso wall is the widest |x| structure present
-  // across nearly the FULL vertical span 0.35H-0.75H. Arms only cross the
-  // top slices, legs only the bottom ones — so vertical continuity separates
-  // them no matter how deep the A-pose droop is. (Max-extent, percentile,
-  // and density-peak estimators all fail once arm intruders get numerous.)
+  // ---- body-type detection (first: floaters use different proportion
+  // windows below). Floaters (ghosts, bugs, robes) have no bilateral leg
+  // mass in the lower region. First-class type, not a failure: clean
+  // floaters get NO "missing legs" warning. Manual override lives in the Lab.
+  let legL = 0, legR = 0;
+  for (let i = 0; i < n; i++) {
+    if (VY[i] < Y(0.45)) {
+      if (VX[i] > 0.05 * H) legL++;
+      else if (VX[i] < -0.05 * H) legR++;
+    }
+  }
+  const bodyType = (legL >= 30 && legR >= 30) ? 'biped' : 'floater';
+  const LEG_BONES = ['upperLegL', 'lowerLegL', 'footL', 'upperLegR', 'lowerLegR', 'footR'];
+  const ACTIVE_BONES = bodyType === 'floater'
+    ? BONE_NAMES.filter((b) => LEG_BONES.indexOf(b) < 0)
+    : BONE_NAMES;
+
+  // torso half-width via horizontal raycasts: cast ±x rays at several heights
+  // in the 0.15-0.40H band (hip/upper-leg/robe region). Arm verts can never
+  // reach this low — even arms hanging straight down bottom out at ~0.48H —
+  // so the widest hit is always torso/hip/leg/robe, never an arm. The band
+  // runs low enough to catch flared robe hems (whose torso can be wider
+  // than the cone at hip height). Raycasts are tessellation-independent,
+  // unlike vertex-band sampling which silently misses on low-poly meshes.
+  scene.updateMatrixWorld(true);
   let tw = 0.13 * H;
   {
-    const SLICES = 8, FA = 0.35, FB = 0.75;
-    const bins = new Map(); // |x| bin (0.01H) -> Map(slice -> count)
-    for (let i = 0; i < n; i++) {
-      const f = (VY[i] - minY) / H;
-      if (f < FA || f > FB) continue;
-      const s = Math.min(SLICES - 1, Math.floor(((f - FA) / (FB - FA)) * SLICES));
-      const b = Math.round(Math.abs(VX[i]) / (0.01 * H));
-      let m = bins.get(b);
-      if (!m) { m = new Map(); bins.set(b, m); }
-      m.set(s, (m.get(s) || 0) + 1);
+    const rc = new THREE.Raycaster();
+    let mx = 0;
+    for (let k = 0; k < 6; k++) {
+      const y = Y(0.15 + 0.05 * k);
+      for (const sgn of [1, -1]) {
+        rc.set(new THREE.Vector3(sgn * 10 * H, y, 0), new THREE.Vector3(-sgn, 0, 0));
+        const hits = rc.intersectObjects(scene.children, true);
+        if (hits.length) {
+          const ax = Math.abs(hits[0].point.x);
+          if (ax > mx) mx = ax;
+        }
+      }
     }
-    let bestB = -1;
-    for (const [b, m] of bins) {
-      let slices = 0;
-      for (const c of m.values()) if (c >= 3) slices++;
-      if (slices >= SLICES - 1 && b > bestB) bestB = b;
-    }
-    if (bestB > 0) tw = Math.max(0.08 * H, bestB * 0.01 * H);
+    if (mx > 0) tw = Math.max(0.08 * H, mx);
   }
 
   // arm direction per side from the shoulder band (T-pose = along ±x,
   // A-pose = angled down-out, supported down to ~60° droop). Band extends
   // low enough to catch deep A-pose hands; the |x| cutoff keeps torso/leg
   // verts out. Model faces +Z, so anatomical right is -X.
+  // v0.6: for floaters the shoulder anchor is the detected arm-centroid
+  // height (their proportions don't follow the 0.80H humanoid rule).
   const shoulderY = Y(0.80);
   const armDir = {};
+  const armShoulderY = {};
   let poseScore = 0, poseCount = 0;
   for (const side of ['L', 'R']) {
     const sgn = side === 'L' ? 1 : -1;
@@ -138,7 +157,9 @@ export function autoRigScene(scene) {
       let cx = 0, cy = 0, cz = 0;
       for (const i of idx) { cx += VX[i]; cy += VY[i]; cz += VZ[i]; }
       cx /= idx.length; cy /= idx.length; cz /= idx.length;
-      dir = new THREE.Vector3(cx - sx, cy - shoulderY, cz - 0).normalize();
+      const sY = bodyType === 'floater' ? cy : shoulderY;
+      armShoulderY[side] = sY;
+      dir = new THREE.Vector3(cx - sx, cy - sY, cz - 0).normalize();
       poseScore += Math.abs(dir.y);
       poseCount++;
       // limb-shape check: a real arm is long and thin along dir; a blobby
@@ -147,7 +168,7 @@ export function autoRigScene(scene) {
       {
         let tMn = Infinity, tMx = -Infinity, uMx = 0;
         for (const i of idx) {
-          const rx = VX[i] - sx, ry = VY[i] - shoulderY, rz = VZ[i];
+          const rx = VX[i] - sx, ry = VY[i] - sY, rz = VZ[i];
           const t = rx * dir.x + ry * dir.y + rz * dir.z;
           const px = rx - dir.x * t, py = ry - dir.y * t, pz = rz - dir.z * t;
           const u = Math.sqrt(px * px + py * py + pz * pz);
@@ -180,7 +201,10 @@ export function autoRigScene(scene) {
   J.head = V3(0, Y(0.875), 0);
   for (const side of ['L', 'R']) {
     const sgn = side === 'L' ? 1 : -1;
-    const S = V3(sgn * tw, shoulderY, 0);
+    // v0.6: floaters anchor shoulders at the detected arm height (their
+    // proportions don't follow the humanoid 0.80H rule); bipeds use it.
+    const sY = bodyType === 'floater' && armShoulderY[side] != null ? armShoulderY[side] : shoulderY;
+    const S = V3(sgn * tw, sY, 0);
     const E = S.clone().addScaledVector(armDir[side], 0.17 * H);
     const W = E.clone().addScaledVector(armDir[side], 0.15 * H);
     J['upperArm' + side] = S;
@@ -194,27 +218,28 @@ export function autoRigScene(scene) {
   // ---- 4. humanoid-likeness sanity checks (warnings, not blocks) ----
   // (full width is meaningless in T-pose — arm span ~= height — so check
   // torso slenderness and shoulder span instead)
+  // v0.6: floaters get wider bounds — stubby ghost/bug bodies are normal,
+  // not a humanoid-proportion failure.
   const torsoRatio = H / (2 * tw);
-  if (torsoRatio < 3.0 || torsoRatio > 6.5) warnings.push('torso proportions look off for a humanoid');
+  const ratioLo = bodyType === 'floater' ? 1.5 : 3.0;
+  const ratioHi = bodyType === 'floater' ? 7.0 : 6.5;
+  if (torsoRatio < ratioLo || torsoRatio > ratioHi) warnings.push('torso proportions look off for a humanoid');
   {
     // shoulder span measured in the same wide band the arm detector uses —
     // drooped A-pose arms narrow the high band, so measure low and wide.
     // Deep A-pose (~60°) narrows span toward ~0.55H; allow down to 0.50H.
+    // v0.6: floaters measured on compressed H can legitimately span wider.
     const idx = band(0.44, 0.88, 0);
     let mn = Infinity, mx = -Infinity;
     for (const i of idx) { if (VX[i] < mn) mn = VX[i]; if (VX[i] > mx) mx = VX[i]; }
     const span = mx - mn;
-    if (span < 0.50 * H || span > 1.30 * H) warnings.push('shoulder span is odd — arms may be misdetected');
+    const spanHi = bodyType === 'floater' ? 1.80 * H : 1.30 * H;
+    if (span < 0.50 * H || span > spanHi) warnings.push('shoulder span is odd — arms may be misdetected');
   }
   {
-    let l = 0, r = 0;
-    for (let i = 0; i < n; i++) {
-      if (VY[i] < Y(0.45)) {
-        if (VX[i] > 0.04 * H) l++;
-        else if (VX[i] < -0.04 * H) r++;
-      }
-    }
-    if (l < 30 || r < 30) warnings.push('could not find two legs');
+    // v0.6: for bipeds this is a real warning; for floaters missing legs is
+    // the expected condition (first-class type), so stay silent.
+    if (bodyType === 'biped' && (legL < 30 || legR < 30)) warnings.push('could not find two legs');
   }
   {
     let c = 0;
@@ -247,9 +272,13 @@ export function autoRigScene(scene) {
     const ua = mkBone('upperArm' + side, chest, J['upperArm' + side]);
     const la = mkBone('lowerArm' + side, ua, J['lowerArm' + side]);
     mkBone('hand' + side, la, J['hand' + side]);
-    const ul = mkBone('upperLeg' + side, hips, J['upperLeg' + side]);
-    const ll = mkBone('lowerLeg' + side, ul, J['lowerLeg' + side]);
-    mkBone('foot' + side, ll, J['foot' + side]);
+    // v0.6: floaters get no leg bones at all (cleaner than zero-length
+    // stubs). anim.js / the adapter null-guard missing bones everywhere.
+    if (bodyType === 'biped') {
+      const ul = mkBone('upperLeg' + side, hips, J['upperLeg' + side]);
+      const ll = mkBone('lowerLeg' + side, ul, J['lowerLeg' + side]);
+      mkBone('foot' + side, ll, J['foot' + side]);
+    }
   }
 
   const rigGroup = new THREE.Group();
@@ -257,7 +286,9 @@ export function autoRigScene(scene) {
   rigGroup.updateMatrixWorld(true);
 
   // ---- 6. weight paint: smooth distance-to-bone-segment falloff ----
-  const boneList = BONE_NAMES.map((b) => bones[b]);
+  // v0.6: boneList/boneIndex/adapter all run on ACTIVE_BONES so a legless
+  // floater never leaves undefined holes in the skeleton.
+  const boneList = ACTIVE_BONES.map((b) => bones[b]);
   const boneIndex = {};
   boneList.forEach((b, i) => { boneIndex[b.name] = i; });
   const bw = new THREE.Vector3(); // scratch
@@ -278,9 +309,13 @@ export function autoRigScene(scene) {
     segs.push(segOf('upperArm' + side, null, J['lowerArm' + side], 0.075));
     segs.push(segOf('lowerArm' + side, null, J['hand' + side], 0.065));
     segs.push(segOf('hand' + side, null, J['hand' + side].clone().addScaledVector(d, 0.08 * H), 0.06));
-    segs.push(segOf('upperLeg' + side, null, J['lowerLeg' + side], 0.09));
-    segs.push(segOf('lowerLeg' + side, null, J['foot' + side], 0.075));
-    segs.push(segOf('foot' + side, null, J['foot' + side].clone().add(V3(0, -0.03 * H, 0.11 * H)), 0.07));
+    // v0.6: no leg segments for floaters — lower-body verts bind to
+    // hips/spine instead, which is exactly right for a ghost/robe.
+    if (bodyType === 'biped') {
+      segs.push(segOf('upperLeg' + side, null, J['lowerLeg' + side], 0.09));
+      segs.push(segOf('lowerLeg' + side, null, J['foot' + side], 0.075));
+      segs.push(segOf('foot' + side, null, J['foot' + side].clone().add(V3(0, -0.03 * H, 0.11 * H)), 0.07));
+    }
   }
   // NOTE: segOf ignores its `a` param and uses the bone's world position —
   // the joint position IS the bone position by construction.
@@ -339,19 +374,22 @@ export function autoRigScene(scene) {
 
   // ---- 7. pseudo-VRM adapter: speaks the vrm.js / anim.js contract ----
   const byVrmName = {};
-  for (const b of BONE_NAMES) byVrmName[VRM_BONE_MAP[b]] = bones[b];
+  for (const b of ACTIVE_BONES) byVrmName[VRM_BONE_MAP[b]] = bones[b];
   const humanoid = {
     getNormalizedBoneNode: (name) => byVrmName[name] || null,
     resetNormalizedPose: () => {
-      for (const b of BONE_NAMES) bones[b].rotation.set(0, 0, 0);
+      for (const b of ACTIVE_BONES) bones[b].rotation.set(0, 0, 0);
     },
   };
   const vrm = { scene: rigGroup, humanoid, update: () => {} };
 
   const ok = warnings.length === 0;
-  const notice = ok
-    ? `Auto-rigged — arms detected: ${pose}-pose`
-    : `Auto-rigged with warnings (${warnings[0]}${warnings.length > 1 ? `, +${warnings.length - 1} more` : ''}) — results may be janky`;
+  // v0.6: floaters get their own first-class notice (also the import toast).
+  const notice = bodyType === 'floater'
+    ? (ok ? 'Auto-rigged — Floater type detected — hover locomotion'
+          : `Auto-rigged floater with warnings (${warnings[0]}${warnings.length > 1 ? `, +${warnings.length - 1} more` : ''}) — results may be janky`)
+    : ok ? `Auto-rigged — arms detected: ${pose}-pose`
+          : `Auto-rigged with warnings (${warnings[0]}${warnings.length > 1 ? `, +${warnings.length - 1} more` : ''}) — results may be janky`;
 
-  return { vrm, vrm0: false, autorig: { pose, warnings, notice, ok, boneCount: boneList.length } };
+  return { vrm, vrm0: false, autorig: { pose, bodyType, warnings, notice, ok, boneCount: boneList.length } };
 }

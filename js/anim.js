@@ -9,6 +9,7 @@ import { BONE_NAMES, VRM_BONE_MAP } from './rig.js';
 import { NEUTRAL_POSE, POSES } from './moves.js';
 
 const _euler = new THREE.Euler();
+const _delta = new THREE.Quaternion();
 
 const lerp = (a, b, u) => a + (b - a) * u;
 // v0.4: smoothstep easing for keyframe interpolation — poses accelerate out
@@ -49,6 +50,63 @@ export function attackPose(move, moveFrame) {
 }
 
 function locomotionPose(f, t) {
+  // v0.6: floaters (ghosts/bugs) don't run — they glide. Hover bob is applied
+  // to the root in engine.js; here: forward glide tilt, swept-back arms,
+  // gentle idle sway. Missing leg bones are simply never posed (applyPose
+  // null-guards). Other states fall through to the standard set, whose leg
+  // references are skipped harmlessly on legless rigs.
+  if (f.bodyType === 'floater') {
+    const P = basePose();
+    const sf = f.stateFrame || 0;
+    switch (f.state) {
+      case 'idle':
+      case 'respawn': {
+        const br = Math.sin(t * 2.6) * 0.05;
+        P.spine = [0, 0, -0.06 + br];
+        P.chest = [0, 0.1, -0.04 + br];
+        P.head = [0, 0, 0.05 + Math.sin(t * 2.6 + 1) * 0.04];
+        P.upperArmR = [0, 0, 0.75 + Math.sin(t * 2.6) * 0.08];
+        P.upperArmL = [0, 0, -0.75 - Math.sin(t * 2.6) * 0.08];
+        P.lowerArmR = [0, 0, 0.5];
+        P.lowerArmL = [0, 0, -0.5];
+        break;
+      }
+      case 'run': {
+        // glide: leaned into the motion, arms trailed back, slight bob sync
+        const lean = 0.30 + Math.sin(t * 7) * 0.02;
+        P.spine = [0, 0, -lean];
+        P.chest = [0, 0.08, -lean * 0.7];
+        P.head = [0, 0, 0.18];
+        P.upperArmR = [0, 0, -0.5 - Math.sin(t * 7) * 0.06];
+        P.upperArmL = [0, 0, 0.5 + Math.sin(t * 7) * 0.06];
+        P.lowerArmR = [0, 0, -0.9];
+        P.lowerArmL = [0, 0, 0.9];
+        break;
+      }
+      case 'jump': {
+        P.upperArmR = [0, 0, 1.7]; P.upperArmL = [0, 0, -1.7];
+        P.lowerArmR = [0, 0, 0.5]; P.lowerArmL = [0, 0, -0.5];
+        P.spine = [0, 0, -0.12];
+        P.head = [0, 0, -0.1];
+        break;
+      }
+      case 'airdodge':
+      case 'fall': {
+        P.upperArmR = [0, 0, 2.2]; P.lowerArmR = [0, 0, 0.5];
+        P.upperArmL = [0, 0, -2.2]; P.lowerArmL = [0, 0, -0.5];
+        P.spine = [0, 0, 0.05];
+        P.head = [0, 0, -0.12];
+        break;
+      }
+      default:
+        return locomotionPoseBiped(f, t);
+    }
+    return P;
+  }
+  return locomotionPoseBiped(f, t);
+}
+
+function locomotionPoseBiped(f, t) {
   const P = basePose();
   const sf = f.stateFrame || 0;
   switch (f.state) {
@@ -230,12 +288,29 @@ export function applyPose(f, eulerDict) {
   if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
     const humanoid = f.vrm.vrm.humanoid;
     humanoid.resetNormalizedPose();
+    // v0.6.1: VRM bones — especially head/neck — have NON-identity rest
+    // orientations after resetNormalizedPose() (three-vrm restores the
+    // model's normalized rest pose, not identity). Our keyframes are deltas
+    // from rest, so capture each bone's rest quaternion once and apply
+    // rest * delta. The old absolute setFromEuler() wiped the rest pose and
+    // showed up as a constant twist, most visibly on the head. For
+    // identity-rest rigs (procedural, auto-rigged) rest*delta === delta,
+    // so their behavior is unchanged.
+    if (!f._vrmRest) {
+      f._vrmRest = {};
+      for (const b of BONE_NAMES) {
+        const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+        f._vrmRest[b] = nd ? nd.quaternion.clone() : null;
+      }
+    }
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
       if (!e) continue;
       const node = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
-      if (!node) continue; // optional bones may be missing
-      node.quaternion.setFromEuler(_euler.set(e[0], e[1], e[2]));
+      const rest = f._vrmRest[b];
+      if (!node || !rest) continue; // optional bones may be missing
+      _delta.setFromEuler(_euler.set(e[0], e[1], e[2]));
+      node.quaternion.copy(rest).multiply(_delta);
     }
   } else if (f.rig) {
     for (const b of BONE_NAMES) {

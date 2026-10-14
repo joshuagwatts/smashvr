@@ -42,6 +42,10 @@ export function buildProceduralRig(theme, variant) {
   const accentMat = new THREE.MeshStandardMaterial({ color: theme.primary, roughness: 0.6, metalness: 0.15 });
   const darkMat = new THREE.MeshStandardMaterial({ color: '#26262e', roughness: 0.9, metalness: 0.0 });
 
+  // v0.6: WISP — floating ghost type. Rounded hovering body, little arms,
+  // NO legs (floater rig: leg bones are simply absent; anim.js null-guards).
+  if (variant === 'wisp') return buildWispRig(theme, suitMat, accentMat, darkMat);
+
   const bulky = variant === 'ronin';
   const group = new THREE.Group();
   const bones = {};
@@ -136,4 +140,77 @@ export function buildProceduralRig(theme, variant) {
   }
 
   return { group, bones, setTheme, variant };
+}
+
+// v0.6: WISP ghost rig — floater body type. No leg bones at all; the engine
+// hovers it (bob in syncRoot) and anim.js skips missing bones harmlessly.
+// Visual mass sits y ~0.2–1.5 so the feet-anchored hurtbox still fits.
+function buildWispRig(theme, suitMat, accentMat, darkMat) {
+  const group = new THREE.Group();
+  const bones = {};
+  const at = (name, parent, x, y, z) => {
+    const g = new THREE.Group();
+    g.position.set(x, y, z);
+    parent.add(g);
+    bones[name] = g;
+    return g;
+  };
+
+  // core: hips low (the hover anchor), body as one big rounded ghost mass
+  const hips = at('hips', group, 0, 0.55, 0);
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.44, 24, 18), suitMat);
+  body.scale.set(1, 1.18, 0.92);
+  body.position.y = 0.35;
+  hips.add(body);
+  // tail wisp underneath
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.20, 0.42, 16), suitMat);
+  tail.rotation.x = Math.PI; // point down
+  tail.position.y = -0.12;
+  hips.add(tail);
+  // accent sash around the middle
+  const sash = new THREE.Mesh(new THREE.TorusGeometry(0.40, 0.045, 10, 28), accentMat);
+  sash.rotation.x = Math.PI / 2;
+  sash.position.y = 0.28;
+  hips.add(sash);
+
+  const spine = at('spine', hips, 0, 0.30, 0);
+  const chest = at('chest', spine, 0, 0.22, 0);
+  const chestGlow = new THREE.Mesh(new THREE.SphereGeometry(0.10, 14, 10), accentMat);
+  chestGlow.position.set(0.30, 0.05, 0);
+  chest.add(chestGlow);
+
+  const neck = at('neck', chest, 0, 0.20, 0);
+  const head = at('head', neck, 0, 0.10, 0);
+  // ghost eyes on the +X face (fighter faces +X)
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 10), darkMat);
+    eye.position.set(0.30, 0.12, s * 0.11);
+    head.add(eye);
+    const glint = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), accentMat);
+    glint.position.set(0.345, 0.14, s * 0.11);
+    head.add(glint);
+  }
+  // little ghost arms (v0.6.1: on ±X like the biped rig — were on ±Z by mistake,
+  // which put the "right" arm behind the body and broke hitbox sync)
+  for (const s of [-1, 1]) {
+    const L = s < 0 ? 'L' : 'R';
+    const shoulder = at('upperArm' + L, chest, s * 0.38, 0.10, 0);
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.20, 4, 10), suitMat);
+    upper.position.y = -0.13;
+    shoulder.add(upper);
+    const elbow = at('lowerArm' + L, shoulder, 0, -0.28, 0);
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.18, 4, 10), suitMat);
+    fore.position.y = -0.12;
+    elbow.add(fore);
+    const wrist = at('hand' + L, elbow, 0, -0.26, 0);
+    const mitt = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 10), accentMat);
+    wrist.add(mitt);
+  }
+
+  function setTheme(t) {
+    suitMat.color.set(t.secondary);
+    accentMat.color.set(t.primary);
+  }
+
+  return { group, bones, setTheme, variant: 'wisp' };
 }

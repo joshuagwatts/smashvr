@@ -674,3 +674,101 @@ arm intruders got numerous), plus a limb-shape elongation check so non-humanoid
 blobs still take the warning path instead of a false "A-pose" classification.
 Tests: 34/34 in test/autorig.mjs (T + A at 15°/30°/45°/60°, deformation checks,
 rigged-file rejection, blob warnings). 14/14 logic still green.
+
+## v0.6 floating body types (2026-10-14)
+Joshua: "some characters like a bug or ghost can be categorized as floating
+types." The auto-rigger now detects body type, floaters get hover locomotion,
+and WISP joins the roster as a built-in ghost fighter.
+
+### Detection rule (js/autorig.js)
+After the humanoid fit, count mesh vertices in the lower region (y < 0.45H)
+split left/right of center (|x| > 0.05H each side). ≥30 verts on EACH side →
+'biped'; otherwise 'floater'. A ghost (torso+head+arms, no legs), a robe
+(single central mass), or a bug body → floater. Clean floaters get zero
+warnings — it's a first-class type, not a failure ("Floater type detected —
+hover locomotion"). rec.autorig.bodyType carries it; the Lab badge and the
+fighter-select card show it.
+
+Floater-specific fitting (their proportions don't follow humanoid rules):
+- Shoulders anchor at the detected arm-centroid height, not 0.80H (a legless
+  character's H is compressed, so 0.80H lands near the head).
+- Torso half-width via horizontal raycasts in the 0.15–0.40H band (arm verts
+  can never reach this low — even arms hanging straight down bottom out at
+  ~0.48H). Raycasts are tessellation-independent; the v0.5.1 vertex-band
+  continuity estimator silently missed on low-poly meshes (bands fall between
+  vertex rows) and has been retired.
+- Proportion sanity checks (torso slenderness, shoulder span) get wider
+  bounds for floaters — stubby ghost bodies are normal.
+
+### Floater rig
+No leg bones are created (11 bones vs 17). applyPose null-guards missing bones
+on both the VRM and procedural paths, so kicks/dtilt/fsmash pose without
+throwing — their hitboxes are positional data and still resolve. The v0.7
+plan (hitboxes generated from the live posed skeleton) will want a real
+answer for legless kick visuals; for v1 it's visual-only.
+
+### Hover locomotion (js/engine.js) — the Jigglypuff archetype
+- Idle: gentle vertical bob (sin, ±0.06u) on the fighter root, applied in both
+  syncRoot and the render-interpolation pass (the render pass overwrites
+  root.position every frame, so visual-only offsets must ride along).
+- Run → glide: no leg cycle; slight forward tilt + trailing bob while moving.
+- Jumps are floaty: gravity ×0.55 airborne, fall-speed cap ×0.62, air drift
+  ×1.15. Analytic fall time from jump apex: 1/√0.55 ≈ 1.35× biped.
+- Double jump kept. Knockback, hitstun, shield, dodges, grabs — identical.
+
+### WISP (js/fighters.js)
+Built-in ghost fighter: rounded hovering body, little arms, no legs, gentle
+bob. bodyType 'floater', runs the VOLT kit (16 wisp_-prefixed moves so the Lab
+treats them as native). 3 fighters on the select screen now. Full theme /
+alt-theme treatment like the others. (Caught in testing: buildWispRig placed
+the arms on ±Z instead of ±X — the "right" arm sat behind the body and broke
+hitbox sync; fixed.)
+
+### Lab (js/lab.js)
+Body-type badge per def ("BIPED (auto)" / "FLOATER (auto)" / "(override)") +
+manual override dropdown (Auto / Biped / Floater), persisted per def as
+smashvr_bodytype_<defId>. Override toggles locomotion without re-import;
+def buttons are built from the live def list (was hardcoded ronin/volt).
+
+### v0.6.1 VRM rest-pose fix (same day)
+Joshua imported a real VRM: "its head was a little fucked up." Root cause
+confirmed in the vendored three-vrm: resetNormalizedPose() restores each
+bone's MODEL rest quaternion (generally non-identity — especially head/neck),
+and applyPose then overwrote it absolutely with setFromEuler(). That worked
+on the procedural rig (identity rests) but showed as a constant twist on real
+VRMs, most visibly the head. Fix: capture each bone's post-reset rest
+quaternion once per model (f._vrmRest, invalidated on attach/remove) and
+apply every keyframe as rest * delta. Identity-rest rigs (procedural,
+auto-rigged) are mathematically unchanged (rest*delta === delta). Node test
+test/vrm_rest.mjs: 8/8 (30°-yaw head rest → world == rest*delta, not delta
+alone, not double-applied, stable across frames, procedural path untouched,
+re-attach picks up the new model's rests). Awaiting his retest with the same
+VRM.
+
+### Tests
+- test/bodytype.mjs (new): 20/20 — ghost → floater/zero warnings/11 bones,
+  robe → floater, biped → biped, full 3-fighter moveset poses on a legless rig
+  without throwing, all hitboxes resolve positionally, wisp rig has no legs,
+  createFighter wiring.
+- test/vrm_rest.mjs (new): 8/8 (above).
+- Full suite, no regressions: autorig 34/34, logic 14/14, playtest 19/19,
+  feel_v02 11/11 (fixed a pre-existing flake: the KO camera check read the
+  render-interpolated position, which trails the logical _camS.z by a frame —
+  it now checks _camS.z), feel_v03 40/40, feel_v04 22/22, color_v03 27/27,
+  hitbox_sync 383 samples / 0 out of sync, angle_bands all in band.
+- Browser: WISP vs CPU played headless — hover bob measured (±0.06), glide,
+  floaty jump, took a hit (percent > 0), screenshot verify/wisp.png. Ghost GLB
+  imported via the file picker → "Floater type detected — hover locomotion"
+  toast + "Floater — hover locomotion (auto-detected)" badge.
+
+### Honest gaps
+- Kick moves on floaters look odd — no leg visuals, hitboxes still work
+  (mechanical, positional). Visual only; v0.7's skeleton-driven hitboxes
+  will need a real answer.
+- WISP is VOLT's kit on a ghost body; some hitbox→limb sync is close to the
+  0.6u threshold by construction (different proportions, same offsets).
+- Floater + deep-A-pose import untested (arms-down ghosts); the shoulder
+  anchor follows the detected arm height, should be fine, not verified.
+- The rest-pose fix is verified against a mock; a real-VRM retest by Joshua
+  is the ground truth.
+- Audio: still never actually heard. CPU AI quality: still unevaluated.
