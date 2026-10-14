@@ -9,9 +9,11 @@ import { BONE_NAMES, VRM_BONE_MAP } from './rig.js';
 import { NEUTRAL_POSE, POSES } from './moves.js';
 
 const _euler = new THREE.Euler();
-let _clock = 0;
 
 const lerp = (a, b, u) => a + (b - a) * u;
+// v0.4: smoothstep easing for keyframe interpolation — poses accelerate out
+// of and settle into each key instead of snapping linearly between them.
+const sstep = (u) => u * u * (3 - 2 * u);
 
 function basePose() {
   const out = {};
@@ -21,6 +23,9 @@ function basePose() {
 
 // Interpolate a move's keyframe track at moveFrame/total.
 // Exported for the hitbox-sync test (test/hitbox_sync.mjs).
+// v0.4: eased (smoothstep) within each keyframe span instead of linear;
+// kill/strong moves get a punch-through exaggeration on the final span
+// (mid-span push past the linear path, landing exactly on the keyframes).
 export function attackPose(move, moveFrame) {
   const keys = move.anim;
   const t = move.total > 0 ? Math.min(1, Math.max(0, moveFrame / move.total)) : 1;
@@ -29,11 +34,16 @@ export function attackPose(move, moveFrame) {
   const k0 = keys[i], k1 = keys[i + 1];
   const span = (k1.t - k0.t) || 1;
   const u = Math.min(1, Math.max(0, (t - k0.t) / span));
+  let ue = sstep(u);
+  const lastSpan = (i === keys.length - 2);
+  if (lastSpan && (move.kbClass === 'kill' || move.kbClass === 'strong')) {
+    ue = ue + Math.sin(ue * Math.PI) * 0.09;
+  }
   const out = {};
   for (const b of BONE_NAMES) {
     const a = k0.bones[b] || NEUTRAL_POSE[b] || [0, 0, 0];
     const c = k1.bones[b] || NEUTRAL_POSE[b] || [0, 0, 0];
-    out[b] = [lerp(a[0], c[0], u), lerp(a[1], c[1], u), lerp(a[2], c[2], u)];
+    out[b] = [lerp(a[0], c[0], ue), lerp(a[1], c[1], ue), lerp(a[2], c[2], ue)];
   }
   return out;
 }
@@ -236,19 +246,48 @@ export function applyPose(f, eulerDict) {
   }
 }
 
-export function tickFighterVisual(f, dt) {
-  _clock += dt;
-  let pose;
-  if (f.state === 'attack' && f.moveId && f.moves[f.moveId]) {
-    pose = attackPose(f.moves[f.moveId], f.moveFrame || 0);
-  } else {
-    pose = locomotionPose(f, _clock);
+function lerpPose(a, b, u) {
+  const out = {};
+  for (const bn of BONE_NAMES) {
+    const A = (a && a[bn]) || [0, 0, 0];
+    const B = (b && b[bn]) || [0, 0, 0];
+    out[bn] = [lerp(A[0], B[0], u), lerp(A[1], B[1], u), lerp(A[2], B[2], u)];
   }
+  return out;
+}
+
+// v0.4: crossfade between states so fighters never pop between poses.
+const BLEND_TICKS = 5;
+
+export function tickFighterVisual(f, dt) {
+  // Hitstop freezes the pose as well as the physics — the impact reads.
+  if (f.hitPause > 0) return;
+  // v0.4: per-fighter anim clock (was a shared global) so a frozen fighter
+  // resumes its own cycle phase instead of jumping to the global one.
+  f._animT = (f._animT || 0) + dt;
+  const key = f.state + '|' + (f.moveId || '');
+  let target;
+  if (f.state === 'attack' && f.moveId && f.moves[f.moveId]) {
+    target = attackPose(f.moves[f.moveId], f.moveFrame || 0);
+  } else {
+    target = locomotionPose(f, f._animT);
+  }
+  let pose = target;
+  if (f._animKey !== key) {
+    f._blendFrom = f._animPose || target;
+    f._blendT = 0;
+    f._animKey = key;
+  }
+  if (f._blendT < BLEND_TICKS) {
+    f._blendT++;
+    pose = lerpPose(f._blendFrom, target, sstep(Math.min(1, f._blendT / BLEND_TICKS)));
+  }
+  f._animPose = pose;
   applyPose(f, pose);
   if (f.vrm && f.vrm.vrm) f.vrm.vrm.update(dt); // spring bones, etc.
   // Respawn invulnerability blink — only while respawning, so dodge/ledge
   // intangibility (which also uses invuln) doesn't strobe the fighter.
-  if (f.root) f.root.visible = !(f.state === 'respawn' && f.invuln > 0 && Math.floor(_clock * 12) % 2 === 1);
+  if (f.root) f.root.visible = !(f.state === 'respawn' && f.invuln > 0 && Math.floor(f._animT * 12) % 2 === 1);
 }
 
 export function setFighterTheme(f, theme) {

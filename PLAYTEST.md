@@ -550,3 +550,116 @@ available to the verifying agent) — the file picker wiring, `loadVRMFile`
 branching, and pseudo-VRM attach path were reviewed statically. Needs Joshua:
 drag a real character GLB onto the import button and report what happens —
 that is the ground-truth test for v1 heuristics.
+
+## Feel pass v0.4 — smoothness + hit clarity ("juice") (2026-10-14)
+
+Joshua's verdict on v0.3 is ground truth: "the fighting doesn't feel smooth
+and the hits are hard to be aware of." Pure feel pass — no new mechanics, no
+frame-data / knockback / angle changes. (Shipped alongside v0.5's GLB
+auto-rig import, which lives in the same tree — js/autorig.js — and was
+verified not to interact: the v0.4 changes operate below the rig/VRM
+abstraction.)
+
+### A. Smoothness
+
+1. **Eased pose interpolation** (`js/anim.js` `attackPose`): smoothstep easing
+   inside every keyframe span instead of linear; kill/strong moves get a
+   punch-through exaggeration on the final span (mid-span push, lands exactly
+   on keyframes — verified `endDiff=0`). Hitbox sync re-verified: **263/263
+   samples still in sync** (easing deviations stay far under the 0.6u bar).
+2. **State-transition blending**: `tickFighterVisual` crossfades 5 ticks
+   (smoothstepped) on every state key change (`state|moveId`), from the last
+   applied pose — idle/run/attack/hitstun no longer pop. Verified: blend
+   engages on transition, pose provably still traveling mid-blend.
+3. **Camera smoothing**: `updateCamera` now lerps a persistent smoothed
+   position toward its target (k=0.16/tick) instead of snapping; shake is
+   applied unsmoothed on top. KO punch-in target math unchanged. Measured
+   max per-tick camera delta over 300 ticks of live play: **0.059u**
+   (bound 1.2) — no snaps, including across respawn teleports.
+4. **Render interpolation** (`game.update`): pre-tick positions are
+   snapshotted and the render pass lerps between them by `acc/TICK` — kills
+   judder on >60Hz displays where the fixed 1/60 tick pattern would land
+   unevenly. Fighter roots AND port rings interpolate together.
+5. **Per-fighter anim clock**: locomotion phase moved from a shared global to
+   `f._animT`, so a fighter frozen by hitstop resumes its own cycle instead
+   of jumping to the global phase. Hitstop now also freezes the pose
+   (`tickFighterVisual` early-returns on `hitPause > 0`) — true hitstop.
+
+### B. Hit awareness
+
+1. **Hitstop on connect**: `3 + dmg*0.3`, clamped 3–8 ticks (was
+   `3 + dmg*0.25`, min 2). Measured: jab 3, fsmash 7, KO blow 25
+   (26 minus the defender's same-tick decrement). KO freeze stays its own
+   26-tick beat; they never stack.
+2. **Victim hit-flash**: `fx.setHitFlash` whites out every emissive-capable
+   material under the victim's root for 4 ticks, then restores originals
+   (works for procedural rigs and VRM models; sprites/shield bubble skipped).
+   Verified set + full restore.
+3. **Contact-point sparks**: `hitSpark` now takes `{dx, dy, dmg}` — bigger
+   burst + hotter core, plus directional debris (4 + min(10, round(dmg/2))
+   chunks) sprayed along the launch vector. Measured: jab 5, fsmash 13.
+4. **Launch speed-lines**: `fx.speedLines` — 5–9 elongated streak sprites
+   oriented along the launch dir, trailing behind the victim, on strong/kill
+   launches only. Verified: zero on jab, burst on fsmash.
+5. **Damage numbers**: tiny pooled DOM chips (`#dmg-layer`) pop off the
+   victim with the rounded damage, float up and fade in 30 ticks (45 for the
+   KO blow, larger + gold). Verified spawn with correct value, fade + removal.
+6. **Hit SFX rebuilt** (`js/audio.js`): 2ms snap transient (highpassed click)
+   + noise body + fast-dropping sine thump, all scaled by power; KO boom is
+   now sub-drop + rumble + crack tail. Entry points verified not to throw
+   headless; actual sound still needs ears (unchanged gap).
+7. **KO vignette**: white edge-flash (`#ko-vignette`) pulses on the KO blow
+   alongside the existing freeze/punch-in. Verified timer armed; visible in
+   `verify/kofreeze_v04.png`.
+
+### Verification (all green, zero regressions)
+
+- `test/feel_v04.mjs` (NEW): **22/22** — easing active + keyframes exact,
+  hitstop 3/7/25, KO vignette + cinematic armed, flash set/restored white,
+  spark contact + debris 5/13, speed-lines only on kill moves, damage
+  numbers spawn/fade, camera maxDelta 0.059u, blend engaged + traveling,
+  sfx entry points, zero console errors.
+- Regressions: playtest **19/19**, feel_v02 **11/11**, feel_v03 **40/40**,
+  color_v03 **27/27** (one check updated: the port ring now asserts against
+  the render-interpolated root position — exact — plus a loose logic-x
+  bound), logic **14/14**, hitbox_sync **263/263**, angle bands pass,
+  kb_scaling pass, rebalance **18/18** (jump tests updated for the v0.3
+  short-hop: they were tapping, which is now correctly a short hop —
+  hold-through-squat measures the full jump again).
+- Screenshots: `verify/hit_clarity.png` (white flash + burst + damage
+  numbers), `verify/launch_lines.png` (fsmash at 138%, flash + spark +
+  speed-lines + "18"), `verify/kofreeze_v04.png` (KO freeze: vignette,
+  flash, gold "18", camera pushed in).
+- Test-only fixes during the pass (no game changes): feel_v04's KO/blend
+  sections needed correct spacing and hitstop-aware sampling; its driver
+  `reset()` now restores stocks (the KO test spends one) and revives a
+  spent match; rebalance jump tests hold through jump-squat.
+
+### Changed files (deployed)
+
+js/anim.js (easing, blending, per-fighter clock, hitstop pose freeze),
+js/engine.js (camera smoothing, render interpolation, hitstop retune,
+flash/spark/speed-line/damage-number/vignette hooks, per-tick juice updates),
+js/fx.js (directional debris, speedLines, hit-flash, damage numbers,
+vignette, debug hooks), js/audio.js (punchier hit/ko + click transient),
+js/main.js (fx/sfx debug exposure on `window.__sv`), index.html
+(`#dmg-layer`, `#ko-vignette`), css/style.css (their styles),
+test/feel_v04.mjs (new), test/color_v03.mjs + test/rebalance.mjs (harness
+updates), PLAYTEST.md (this section).
+
+### Honest not-verified list (post-v0.4)
+
+- **Feel is still his call** — the juice is all in, but only his hands
+  decide if it feels smooth and hits read (unchanged).
+- **Audio** — synthesis rebuilt for punch on paper; still never actually
+  heard (unchanged).
+- **Real VRM/GLB import** — v0.5 shipped the auto-rig path; still needs his
+  real character file (his directive: test after gameplay is dialed in).
+- **Shake/vignette/flash magnitudes on real hardware** — eyeballed
+  headless; may want nudging after he plays.
+- **High-refresh render interpolation** — correct by construction, but this
+  VM's headless Chromium runs at 60Hz software rendering; the >60Hz path
+  is unexercised here.
+- **Damage-number overlap** — rapid multi-hits stack chips (they fade in
+  0.5s); fine in real play, dense in the deterministic tests.
+- **CPU AI quality** — still unevaluated beyond not-suiciding (unchanged).

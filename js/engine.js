@@ -11,6 +11,8 @@ import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear,
+  setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
+  setVignette,
 } from './fx.js';
 import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js';
 import { Input } from './input.js';
@@ -236,17 +238,35 @@ export function createGame(opts) {
     // feel pass v0.2: impact shake + KO-blow cinematic state
     _shakeT: 0, _shakeDur: 1, _shakeAmp: 0,
     _koFx: null,                // { t, dur, x, y } while the KO freeze plays
+    _vignT: 0,                   // v0.4: white-vignette pulse timer on the KO blow
 
     update(dt) {
       if (this.paused || this.state === 'done') return;
       this._acc = Math.min(this._acc + dt, 0.25);
       this._human = [readHuman(1), readHuman(2)]; // sample once per frame
+      // v0.4 render interpolation: snapshot pre-tick positions so the render
+      // pass can sit between ticks — kills judder on >60Hz displays where the
+      // tick pattern would otherwise land unevenly across frames.
+      for (const f of this.fighters) { f._ppx = f.x; f._ppy = f.y; }
+      const cp = this.camera.position;
+      this._camPx = cp.x; this._camPy = cp.y; this._camPz = cp.z;
       let n = 0;
       while (this._acc >= TICK && n < 5) {
         this._acc -= TICK; n++;
         this.tick();
       }
       if (n === 5) this._acc = 0; // shed backlog, no spiral
+      const alpha = Math.max(0, Math.min(1, this._acc / TICK));
+      for (const f of this.fighters) {
+        if (!f.root) continue;
+        const rx = f._ppx + (f.x - f._ppx) * alpha;
+        const ry = f._ppy + (f.y - f._ppy) * alpha;
+        f.root.position.set(rx, ry, 0);
+        if (f._portRing) f._portRing.position.set(rx, 0.02, 0);
+      }
+      cp.x = this._camPx + (cp.x - this._camPx) * alpha;
+      cp.y = this._camPy + (cp.y - this._camPy) * alpha;
+      cp.z = this._camPz + (cp.z - this._camPz) * alpha;
     },
 
     tick() {
@@ -275,7 +295,12 @@ export function createGame(opts) {
         tickFighterVisual(f, TICK);
         syncRoot(f);
         if (f._shieldMesh) updateShieldBubble(f);
+        tickHitFlash(f); // v0.4: decay the victim hit-flash, restore materials
       }
+      // v0.4: damage numbers track the camera; KO vignette pulses and fades.
+      updateDamageNumbers(this.camera);
+      if (this._vignT > 0) this._vignT--;
+      setVignette(this._vignT > 0 ? this._vignT / 22 : 0);
       this.pushHud();
     },
 
@@ -391,8 +416,18 @@ function updateCamera(game) {
     lookY = lookY + (Math.max(0.5, k.y + 1) - lookY) * e;
   }
 
+  // v0.4: the camera lerps toward its target every tick instead of snapping
+  // to it — midpoint jumps (respawns, KOs) ease over instead of cutting.
+  const S = game._camS || (game._camS = { x: cx, y: cy, z, lookY });
+  const ck = 0.16;
+  S.x += (cx - S.x) * ck;
+  S.y += (cy - S.y) * ck;
+  S.z += (z - S.z) * ck;
+  S.lookY += (lookY - S.lookY) * ck;
+
   // impact shake (v0.2): subtle, amplitude decays quadratically — strong/kill
-  // hits and KO blows only, never weak pokes.
+  // hits and KO blows only, never weak pokes. Applied AFTER the smoothing so
+  // the shake itself stays snappy while the base motion stays smooth.
   let sx = 0, sy = 0;
   if (game._shakeT > 0) {
     game._shakeT--;
@@ -402,8 +437,8 @@ function updateCamera(game) {
     sy = (Math.random() * 2 - 1) * amp;
   }
 
-  game.camera.position.set(cx + sx, cy + sy, z);
-  game.camera.lookAt(cx, lookY, 0);
+  game.camera.position.set(S.x + sx, S.y + sy, S.z);
+  game.camera.lookAt(S.x, S.lookY, 0);
 }
 
 // ---------------------------------------------------------------- per-fighter step
@@ -1134,13 +1169,16 @@ function applyHit(game, att, def, hit, hx, hy) {
   // freeze BOTH fighters ~26 ticks, punch the camera in on the victim with a
   // shake pulse, then release into the launch.
   const koBlow = def.stocks <= 1 && predictKO(def, lvx, lvy, def._hitstunDur);
-  const hp = koBlow ? 26 : Math.max(2, Math.round(3 + effDmg * 0.25));
+  // v0.4: hitstop on EVERY connect, scaled by damage (3-8 ticks) — the KO
+  // freeze stays its own longer beat; they never stack, the KO wins.
+  const hp = koBlow ? 26 : Math.min(8, Math.max(3, Math.round(3 + effDmg * 0.3)));
   def.hitPause = hp;
   // attacker freeze: find the real fighter behind att when it's a fighter hit
   const atkF = game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
   if (atkF) atkF.hitPause = hp;
   if (koBlow) {
     game._koFx = { t: 0, dur: 46, x: def.x, y: def.y };
+    game._vignT = 22; // v0.4: white vignette pulse on the KO blow
   }
 
   // v0.2 impact shake: subtle, only on strong/kill hits and KO blows —
@@ -1153,8 +1191,16 @@ function applyHit(game, att, def, hit, hx, hy) {
     game._shakeAmp = Math.min(0.30, 0.06 + kb * 0.0009);
   }
 
+  // v0.4 hit clarity: launch direction for the directional effects below.
+  const lspd = Math.hypot(lvx, lvy) || 1;
+  const ldx = lvx / lspd, ldy = lvy / lspd;
   const power = Math.min(1, effDmg / 22);
-  hitSpark(hx, hy, att.theme, power);
+  setHitFlash(def, 4); // victim white-flash, 4 ticks
+  hitSpark(hx, hy, att.theme, power, { dx: ldx, dy: ldy, dmg: effDmg });
+  if (att.kbClass === 'strong' || att.kbClass === 'kill') {
+    speedLines(def.x, def.y + 0.9, ldx, ldy, att.theme, power);
+  }
+  damageNumber(def.x, def.y + 1.9, Math.round(effDmg), koBlow);
   sfx.hit(power);
 }
 

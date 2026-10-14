@@ -28,6 +28,31 @@ function env(g, t, peak, dur) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
 }
 
+function envFast(g, t, peak, dur, attack = 0.002) {
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak), t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+}
+
+// v0.4: ultra-short highpassed click — the "snap" transient of a hit.
+function click({ dur = 0.05, vol = 0.5, freq = 3200, delay = 0 }) {
+  const c = ac();
+  const t = c.currentTime + delay;
+  const s = c.createBufferSource();
+  s.buffer = noiseBuf;
+  s.loop = true;
+  const f = c.createBiquadFilter();
+  f.type = 'highpass';
+  f.frequency.value = freq;
+  const g = c.createGain();
+  envFast(g, t, vol, dur, 0.002);
+  s.connect(f);
+  f.connect(g);
+  g.connect(master);
+  s.start(t);
+  s.stop(t + dur + 0.05);
+}
+
 function tone({ f0 = 440, f1 = null, dur = 0.15, type = 'sine', vol = 0.5, delay = 0 }) {
   const c = ac();
   const t = c.currentTime + delay;
@@ -71,22 +96,25 @@ export const sfx = {
     } catch (e) { /* audio unavailable — game still runs */ }
   },
 
-  // power01: 0..1, scales pitch + volume
+  // v0.4: rebuilt for punch — 2ms snap transient + noise body + fast-dropping
+  // sine thump, all scaled by power01. Sharper attack, more thump on big hits.
   hit(power01 = 0.5) {
     const p = Math.max(0, Math.min(1, power01));
-    const v = 0.25 + p * 0.55;
-    noise({ dur: 0.12, vol: v, freq: 900 + p * 1800, type: 'lowpass' });
-    tone({ f0: 120 + p * 60, f1: 40, dur: 0.18, type: 'sine', vol: v });
+    click({ dur: 0.045, vol: 0.35 + p * 0.45, freq: 2800 + p * 2000 });
+    noise({ dur: 0.10, vol: 0.25 + p * 0.40, freq: 900 + p * 1600, type: 'lowpass' });
+    tone({ f0: 170 + p * 130, f1: 42, dur: 0.20 + p * 0.06, type: 'sine', vol: 0.40 + p * 0.45 });
   },
 
   whiff() {
     noise({ dur: 0.09, vol: 0.12, freq: 2500, type: 'bandpass', q: 2 });
   },
 
+  // v0.4: bigger KO boom — sub drop + rumble + crack tail.
   ko() {
-    noise({ dur: 0.7, vol: 0.6, freq: 500, type: 'lowpass' });
-    tone({ f0: 200, f1: 30, dur: 0.7, type: 'sine', vol: 0.6 });
-    tone({ f0: 1200, f1: 200, dur: 0.3, type: 'sawtooth', vol: 0.15 });
+    click({ dur: 0.06, vol: 0.70, freq: 2200 });
+    tone({ f0: 95, f1: 26, dur: 0.85, type: 'sine', vol: 0.75 });
+    noise({ dur: 0.55, vol: 0.50, freq: 420, type: 'lowpass' });
+    tone({ f0: 1400, f1: 180, dur: 0.25, type: 'sawtooth', vol: 0.12 });
   },
 
   jump() {
