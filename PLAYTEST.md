@@ -1043,3 +1043,69 @@ that with your friends."
 - Boss shockwaves can hit during player respawn invuln? No — projectiles
   skip invuln fighters (existing guard).
 - Audio never heard headless; CPU AI decision quality unevaluated (standing).
+
+## v0.11 netplay — ONLINE: lobbies, friend invites, versus (2026-10-14)
+Joshua: "i wanna be able to play my bros online."
+
+### Design
+- **Determinism first** (`js/engine.js`, `js/rng.js`): input-sync netcode needs
+  bit-identical sims. Audit found sim-path `Math.random()` in `thinkAI` (AI
+  decisions) and `addFighter` (spawn x) — both now draw from a seeded
+  mulberry32 (`game._rng`, seed syncs at match start). Kept nondeterministic
+  ONLY where it can't feed back: FX particles, camera shake, countdown beeps.
+  `game.stateHash()` canonical string over all gameplay state (rounded 3dp);
+  `game.resetSim(seed)` rebuilds from slot list.
+- **Input-delay lockstep** (`js/netplay.js`, new): 3-tick input delay; sim
+  steps a tick only when ALL humans' inputs for it arrived (brief "WAITING
+  FOR PLAYERS…" indicator, no rollback). Hash every 60 ticks; on mismatch the
+  host broadcasts its authoritative input log and EVERYONE (host included)
+  re-simulates 1..t — determinism makes the heal exact. Resync storm guard
+  (max 1 per 300 ticks) + own-input re-assertion (fixes a broadcast-race
+  deadlock found in testing).
+- **Transport**: Trystero dual-strategy (torrent + nostr, pinned
+  `@trystero-p2p@0.25.4`, LIMBO's pinned relays), STUN-only ICE. Message
+  envelope `{cid, seq}` dedups cross-strategy duplicates.
+- **Lobby** (host-authoritative): 6-char code + `#net=CODE` invite link,
+  name input, player rows (fighter pick ronin/volt/wisp, ready toggle, host
+  kick), host config (FFA / 2v2 teams, CPU bots 0..7), START when all ready.
+  `buildSlots()`: humans in idx order → `net0..net3`, CPU bots fill, teams by
+  idx parity.
+- **Scope v1**: 1v1, 2v2 teams, FFA — up to 4 humans + CPU bots (8-human later
+  if stable). Built-in fighters + default kits only online (custom VRM/Lab
+  kits are per-client → desync risk; model exchange is future work). No pause
+  online (would desync input streams) — HUD "leave match" button instead.
+  Versus + campaign offline paths untouched (netcode is additive/opt-in).
+
+### Verification
+- `test/determinism.mjs` 6/6: same 600-tick all-CPU match, same seed, twice →
+  identical hashes every 60 ticks (4v4, 1v1, 8-FFA); different seed diverges;
+  0.001 perturbation detected. THE hard requirement — green.
+- `test/netproto.mjs` 14/14 (fake channels, same contract as AGENTS.md's
+  WebRTC guidance): 2 drivers in lockstep 600 ticks, hashes match; waiting
+  path under excess latency converges; forced desync → mismatch detected →
+  resync on both → hashes identical; input applies exactly 3 ticks out.
+- `test/signaling.mjs` 10/10: real Trystero join in headless Chromium —
+  esm.sh modules load, room joined with cid, SDP offer generated, send
+  doesn't throw, zero page errors. Peer-join = 0 (UDP wall, expected).
+- `test/lobby_ui.mjs` 25/25: title → ONLINE → create (code shown) → guest
+  hello/pick/ready via protocol → host config → START → net match runs,
+  keyboard sampled into the net log, HUD name chips, no waiting stall, Esc
+  no-op, leave button → title. Zero console/page errors. (Caught 2 real bugs:
+  host's own pick/ready never applied locally; HUD button under canvas.)
+- All 17 node suites green (incl. color_v03 27/27 after freezing the CPU
+  during the ring measurement — the seeded AI walks it away now).
+
+### Honest gaps — what needs Joshua's real devices
+- **Two-phone P2P is GROUND TRUTH and still open.** This VM blocks all UDP,
+  so no real WebRTC connection was ever established here — signaling and
+  protocol layers verified separately, but the first real phone-to-phone
+  match is unverified.
+- **No TURN yet** (STUN-only ICE). Same-LAN / cone-NAT pairs should connect;
+  if two phones on carrier NAT fail to connect, add TURN via the OpenRelay
+  scheme like LIMBO before debugging anything else.
+- Input-delay (not rollback): cross-country latency (~70ms+) will slow the
+  sim instead of desyncing. 3-tick delay = 50ms input lag, always.
+- No custom VRM fighters or Lab kits online (built-ins + default kits only).
+- 4-human cap; no pause; no rematch-from-results (back to lobby).
+- Audio never heard headless (standing); netcode CPU cost unmeasured on
+  phones (0.27ms/tick desktop sim + resync replays).

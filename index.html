@@ -29,6 +29,7 @@
       <button id="btn-1p" class="btn big">1P vs CPU</button>
       <button id="btn-2p" class="btn big">2P Versus</button>
       <button id="btn-campaign" class="btn big camp">CLASSIC MODE</button>
+      <button id="btn-online" class="btn big">ONLINE</button>
       <button id="btn-lab" class="btn">Fighter Lab</button>
       <label class="btn file-btn">Import character (.vrm / .glb / .gltf)
         <input type="file" id="vrm-file" accept=".vrm,.glb,.gltf" hidden>
@@ -93,12 +94,53 @@
   </div>
 </div>
 
+<!-- ============ ONLINE LOBBY ============ -->
+<div id="screen-online" class="screen hidden">
+  <div class="panel">
+    <h2>ONLINE</h2>
+    <p class="subtitle">lobbies · friend invites · 1v1 / 2v2 / FFA</p>
+    <div class="btn-col">
+      <input id="net-name" class="text-in" placeholder="Your name" maxlength="16">
+      <button id="btn-net-create" class="btn big">Create lobby</button>
+      <div class="join-row">
+        <input id="net-code" class="text-in code" placeholder="CODE" maxlength="6">
+        <button id="btn-net-join" class="btn">Join</button>
+      </div>
+      <div id="net-status" class="import-hint"></div>
+      <button id="btn-online-back" class="btn ghost">&#8592; Back</button>
+    </div>
+  </div>
+</div>
+
+<div id="screen-lobby" class="screen hidden">
+  <div class="panel wide">
+    <h2>LOBBY <span id="lobby-code" class="code-big"></span></h2>
+    <p class="subtitle">share the code or <button id="btn-copy-link" class="btn small">copy invite link</button></p>
+    <div id="lobby-players"></div>
+    <div id="lobby-config" class="hidden">
+      <div class="btn-row">
+        <button id="btn-mode-ffa" class="btn sel">FFA</button>
+        <button id="btn-mode-teams" class="btn">2v2 TEAMS</button>
+      </div>
+      <div class="cfg-row">CPU bots: <button id="btn-cpu-dec" class="btn small">−</button>
+        <span id="lobby-cpus">1</span> <button id="btn-cpu-inc" class="btn small">+</button></div>
+    </div>
+    <div class="btn-row">
+      <button id="btn-lobby-start" class="btn big hidden">START MATCH</button>
+      <button id="btn-lobby-leave" class="btn ghost">Leave</button>
+    </div>
+    <div id="lobby-hint" class="import-hint"></div>
+  </div>
+</div>
+
 <!-- ============ HUD ============ -->
 <div id="hud" class="hidden">
   <div class="hud-side left" id="hud-left"></div>
   <div class="hud-center">
     <div class="hud-timer" id="hud-timer">5:00</div>
     <div class="hud-pause-hint">Esc pause</div>
+    <div id="net-waiting" class="hidden">WAITING FOR PLAYERS…</div>
+    <button id="btn-net-leave" class="btn small danger hidden">leave match</button>
   </div>
   <div class="hud-side right" id="hud-right"></div>
 </div>

@@ -88,6 +88,9 @@ function noise({ dur = 0.2, vol = 0.5, freq = 1000, q = 1, type = 'lowpass', del
 }
 
 export const sfx = {
+  // v0.11: when true, all SFX are suppressed — used during silent resync
+  // replay (thousands of simulated ticks must not spam WebAudio).
+  silent: false,
   // resume/create the context on first user gesture
   ensure() {
     try {
@@ -99,6 +102,7 @@ export const sfx = {
   // v0.4: rebuilt for punch — 2ms snap transient + noise body + fast-dropping
   // sine thump, all scaled by power01. Sharper attack, more thump on big hits.
   hit(power01 = 0.5) {
+    if (sfx.silent) return;
     const p = Math.max(0, Math.min(1, power01));
     click({ dur: 0.045, vol: 0.35 + p * 0.45, freq: 2800 + p * 2000 });
     noise({ dur: 0.10, vol: 0.25 + p * 0.40, freq: 900 + p * 1600, type: 'lowpass' });
@@ -106,11 +110,13 @@ export const sfx = {
   },
 
   whiff() {
+    if (sfx.silent) return;
     noise({ dur: 0.09, vol: 0.12, freq: 2500, type: 'bandpass', q: 2 });
   },
 
   // v0.4: bigger KO boom — sub drop + rumble + crack tail.
   ko() {
+    if (sfx.silent) return;
     click({ dur: 0.06, vol: 0.70, freq: 2200 });
     tone({ f0: 95, f1: 26, dur: 0.85, type: 'sine', vol: 0.75 });
     noise({ dur: 0.55, vol: 0.50, freq: 420, type: 'lowpass' });
@@ -118,35 +124,42 @@ export const sfx = {
   },
 
   jump() {
+    if (sfx.silent) return;
     tone({ f0: 280, f1: 520, dur: 0.12, type: 'square', vol: 0.12 });
   },
 
   shieldHit() {
+    if (sfx.silent) return;
     tone({ f0: 750, f1: 600, dur: 0.08, type: 'square', vol: 0.2 });
     noise({ dur: 0.06, vol: 0.15, freq: 4000, type: 'highpass' });
   },
 
   shieldBreak() {
+    if (sfx.silent) return;
     tone({ f0: 900, f1: 120, dur: 0.5, type: 'sawtooth', vol: 0.3 });
     noise({ dur: 0.4, vol: 0.3, freq: 3000, type: 'highpass' });
   },
 
   select() {
+    if (sfx.silent) return;
     tone({ f0: 660, dur: 0.07, type: 'square', vol: 0.15 });
     tone({ f0: 990, dur: 0.1, type: 'square', vol: 0.15, delay: 0.07 });
   },
 
   uiMove() {
+    if (sfx.silent) return;
     tone({ f0: 440, dur: 0.05, type: 'square', vol: 0.08 });
   },
 
   countdownGo() {
+    if (sfx.silent) return;
     tone({ f0: 523, dur: 0.12, type: 'square', vol: 0.2 });
     tone({ f0: 784, dur: 0.22, type: 'square', vol: 0.2, delay: 0.1 });
   },
 
   // v0.3 parry: bright metallic "ting", distinct from shieldHit
   parry() {
+    if (sfx.silent) return;
     tone({ f0: 1500, f1: 2300, dur: 0.12, type: 'triangle', vol: 0.28 });
     noise({ dur: 0.08, vol: 0.18, freq: 6500, type: 'highpass' });
     tone({ f0: 750, f1: 1150, dur: 0.1, type: 'sine', vol: 0.15, delay: 0.02 });
@@ -154,6 +167,7 @@ export const sfx = {
 
   // v0.3 charged smash: persistent tone, pitch rises with charge 0..1
   chargeStart() {
+    if (sfx.silent) return;
     try {
       const c = ac();
       this.chargeStop();
@@ -170,6 +184,7 @@ export const sfx = {
   },
 
   chargeSet(u01) {
+    if (sfx.silent) return;
     try {
       if (!chargeOsc || !ctx) return;
       const u = Math.max(0, Math.min(1, u01));
@@ -178,6 +193,7 @@ export const sfx = {
   },
 
   chargeStop() {
+    if (sfx.silent) return;
     try {
       if (chargeOsc && ctx) {
         const o = chargeOsc, g = chargeGain;

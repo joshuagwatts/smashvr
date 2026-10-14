@@ -120,9 +120,12 @@ try {
   // v0.4: the ring is placed at the RENDER-interpolated position (same pass
   // that positions the fighter's root), so assert against root.position.x
   // (exact) and only loosely against the logic f.x (within a tick of run).
-  await ev(`() => { const b = window.__sv.game.fighters[1]; b.x = 2.5; b.vx = 0; b.state = 'idle'; }`);
+  // v0.11: freeze the fighter on neutral human input for the measurement so
+  // the (now seeded, behavior-changed) CPU AI can't walk it away mid-check.
+  await ev(`() => { const b = window.__sv.game.fighters[1]; b._savedCtrl = b.ctrl; b.ctrl = 'p1'; b.x = 2.5; b.vx = 0; b.state = 'idle'; }`);
   await page.waitForTimeout(400);
   const follow = await ev(`() => { const b = window.__sv.game.fighters[1]; return { fx: +b.x.toFixed(3), rx: +b._portRing.position.x.toFixed(3), px: +b.root.position.x.toFixed(3) }; }`);
+  await ev(`() => { const b = window.__sv.game.fighters[1]; b.ctrl = b._savedCtrl; }`);
   check('ring follows fighter render x', Math.abs(follow.rx - follow.px) < 0.01, `render x=${follow.px} ring x=${follow.rx}`);
   check('ring within a tick of logic x', Math.abs(follow.rx - follow.fx) < 0.25, `fighter x=${follow.fx} ring x=${follow.rx}`);
   const ry = await ev(`() => window.__sv.game.fighters[1]._portRing.position.y`);

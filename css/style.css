@@ -272,3 +272,41 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
 .bosspip {
   position: absolute; top: 0; bottom: 0; width: 2px; background: #0b0e1a;
 }
+
+/* ---------- v0.11 online lobby ---------- */
+.text-in {
+  background: #0d1226; color: #e8ecf8; border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px 14px; font-size: 16px; font-family: inherit;
+  width: 100%; box-sizing: border-box; text-align: center;
+}
+.text-in.code { letter-spacing: 6px; text-transform: uppercase; font-weight: 700; }
+.join-row { display: flex; gap: 10px; }
+.join-row .text-in { flex: 1; }
+.code-big {
+  letter-spacing: 8px; color: #7c5cff; font-size: 1.2em;
+  border: 1px dashed var(--line); border-radius: 8px; padding: 2px 10px 2px 18px;
+}
+#lobby-players { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.lrow {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 12px;
+}
+.lrow.me { border-color: #7c5cff; }
+.lrow.empty { color: #6b7488; font-size: 13px; justify-content: center; border-style: dashed; }
+.lname { flex: 1; font-weight: 600; }
+.ldef {
+  background: #0d1226; color: #e8ecf8; border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; font-family: inherit;
+}
+.btn.small { font-size: 13px; padding: 7px 12px; }
+.btn.danger { background: #5a2333; }
+.cfg-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; }
+#lobby-cpus { min-width: 24px; text-align: center; font-size: 18px; font-weight: 700; }
+#net-waiting {
+  margin-top: 6px; font-size: 13px; font-weight: 700; color: #ffd166;
+  animation: blink 1s steps(2) infinite;
+}
+#btn-net-leave { pointer-events: auto; margin-top: 6px; }
+@keyframes blink { 50% { opacity: 0.4; } }
+#import-failure, .error { color: #ff7b7b !important; }

@@ -14,6 +14,9 @@ import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
 } from './campaign.js';
+import {
+  createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
+} from './netplay.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -88,14 +91,17 @@ function toast(msg, isError = false) {
 
 // ------------------------------------------------------------ screens
 
-const SCREENS = ['screen-title', 'screen-select', 'screen-campaign', 'screen-pause', 'screen-results'];
+const SCREENS = ['screen-title', 'screen-select', 'screen-campaign', 'screen-online', 'screen-lobby', 'screen-pause', 'screen-results'];
 function show(id) {
   for (const s of SCREENS) $(s).classList.toggle('hidden', s !== id);
   if (!id) for (const s of SCREENS) $(s).classList.add('hidden');
 }
 function showHud(v) {
   $('hud').classList.toggle('hidden', !v);
-  if (!v) { $('hud-countdown').classList.add('hidden'); $('hud-extra').classList.add('hidden'); }
+  if (!v) {
+    $('hud-countdown').classList.add('hidden'); $('hud-extra').classList.add('hidden');
+    $('btn-net-leave').classList.add('hidden'); // v0.11: only during net matches
+  }
 }
 
 // ------------------------------------------------------------ fighter select
@@ -353,6 +359,232 @@ function campaignEnd(result) {
   show('screen-results');
 }
 
+// ------------------------------------------------------------ online netplay
+// v0.11: Trystero P2P lobbies + input-delay lockstep matches.
+
+let netTransport = null, netLobby = null, netDriver = null, netMsgHandler = null;
+let netHelloTimer = 0, netBeatTimer = 0;
+const NET_DEFS = ['ronin', 'volt', 'wisp']; // built-ins only online (v1)
+
+function netName() {
+  try { return localStorage.getItem('smashvr_name') || ''; } catch (e) { return ''; }
+}
+function setNetName(n) { try { localStorage.setItem('smashvr_name', n); } catch (e) {} }
+
+function setNetStatus(t, isErr = false) {
+  const el = $('net-status');
+  el.textContent = t;
+  el.classList.toggle('error', isErr);
+}
+
+function openOnline() {
+  $('net-name').value = netName();
+  const m = location.hash.match(/#net=([A-Z0-9]{6})/i);
+  if (m) $('net-code').value = m[1].toUpperCase();
+  setNetStatus('');
+  show('screen-online');
+}
+
+function stopNetTimers() {
+  clearInterval(netHelloTimer); clearInterval(netBeatTimer);
+  netHelloTimer = 0; netBeatTimer = 0;
+}
+
+function wireLobbyTransport() {
+  netMsgHandler = (msg, cid) => { if (netLobby) netLobby.onMsg(msg, cid); };
+}
+
+async function createLobby() {
+  const name = $('net-name').value.trim() || 'Player';
+  setNetName(name);
+  const code = lobbyCode();
+  setNetStatus('Creating lobby…');
+  try {
+    netTransport = await createNetTransport(code, {
+      onMessage: (msg, cid) => { if (netMsgHandler) netMsgHandler(msg, cid); },
+      onPeerJoin: () => renderLobby(),
+      onPeerLeave: () => renderLobby(),
+    });
+    netLobby = new Lobby(netTransport, { isHost: true, name, code });
+    netLobby.players.push({ cid: netTransport.cid, name, idx: 0, def: 'ronin', ready: false });
+    netLobby.onChange = renderLobby;
+    netLobby.onStart = null; // host starts via hostStart()
+    netLobby.onKicked = null;
+    wireLobbyTransport();
+    // host heartbeat: re-broadcast lobby state so staggered joiners catch up
+    stopNetTimers();
+    netBeatTimer = setInterval(() => { if (netLobby && netLobby.isHost) netLobby.broadcast(); }, 3000);
+    setNetStatus('');
+    show('screen-lobby');
+    renderLobby();
+    if (DEBUG) { window.__sv.net = window.__sv.net || {}; window.__sv.net.lobby = netLobby; window.__sv.net.transport = netTransport; }
+    sfx.select();
+  } catch (err) {
+    setNetStatus('Could not create lobby: ' + err.message, true);
+  }
+}
+
+async function joinLobby() {
+  const code = $('net-code').value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(code)) { setNetStatus('Enter the 6-character code', true); return; }
+  const name = $('net-name').value.trim() || 'Player';
+  setNetName(name);
+  setNetStatus('Joining lobby ' + code + '…');
+  try {
+    netTransport = await createNetTransport(code, {
+      onMessage: (msg, cid) => { if (netMsgHandler) netMsgHandler(msg, cid); },
+      onPeerJoin: () => renderLobby(),
+      onPeerLeave: () => renderLobby(),
+    });
+    netLobby = new Lobby(netTransport, { isHost: false, name, code });
+    netLobby.onChange = renderLobby;
+    netLobby.onStart = (seed, slots) => {
+      const me = netLobby.myPlayer();
+      if (me) startNetMatch(seed, slots, me.idx);
+    };
+    netLobby.onKicked = () => { leaveLobby(); toast('Kicked from lobby', true); };
+    wireLobbyTransport();
+    netLobby.hello();
+    // staggered join: re-hello until the host's lobby state lists us
+    stopNetTimers();
+    netHelloTimer = setInterval(() => {
+      if (!netLobby || netLobby.myPlayer()) { clearInterval(netHelloTimer); netHelloTimer = 0; return; }
+      netLobby.hello();
+    }, 2000);
+    setNetStatus('');
+    show('screen-lobby');
+    renderLobby();
+    if (DEBUG) { window.__sv.net = window.__sv.net || {}; window.__sv.net.lobby = netLobby; window.__sv.net.transport = netTransport; }
+    sfx.select();
+  } catch (err) {
+    setNetStatus('Could not join: ' + err.message, true);
+  }
+}
+
+function renderLobby() {
+  if (!netLobby) return;
+  $('lobby-code').textContent = netLobby.code;
+  const me = netLobby.myPlayer();
+  const list = $('lobby-players');
+  list.innerHTML = '';
+  const humans = [...netLobby.players].sort((a, b) => a.idx - b.idx);
+  for (const p of humans) {
+    const row = document.createElement('div');
+    row.className = 'lrow' + (me && p.cid === me.cid ? ' me' : '');
+    const nm = document.createElement('span');
+    nm.className = 'lname';
+    nm.textContent = `#${p.idx + 1} ${p.name}${netLobby.isHost && p.cid === netTransport.cid ? ' (host)' : ''}`;
+    row.appendChild(nm);
+    // fighter picker (built-ins only, v1) — own row only
+    const sel = document.createElement('select');
+    sel.className = 'ldef';
+    for (const d of NET_DEFS) {
+      const o = document.createElement('option');
+      o.value = d; o.textContent = d.toUpperCase();
+      if (d === p.def) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.disabled = !(me && p.cid === me.cid);
+    sel.addEventListener('change', () => { sfx.uiMove(); netLobby.pick(sel.value); });
+    row.appendChild(sel);
+    // ready toggle — own row only
+    const rb = document.createElement('button');
+    rb.className = 'btn small' + (p.ready ? ' sel' : '');
+    rb.textContent = p.ready ? 'READY ✓' : 'ready?';
+    rb.disabled = !(me && p.cid === me.cid);
+    rb.addEventListener('click', () => { sfx.select(); netLobby.setReady(!p.ready); });
+    row.appendChild(rb);
+    // kick — host only, not self
+    if (netLobby.isHost && me && p.cid !== me.cid) {
+      const kb = document.createElement('button');
+      kb.className = 'btn small danger';
+      kb.textContent = 'kick';
+      kb.addEventListener('click', () => netLobby.hostKick(p.idx));
+      row.appendChild(kb);
+    }
+    list.appendChild(row);
+  }
+  for (let i = humans.length; i < 4; i++) {
+    const row = document.createElement('div');
+    row.className = 'lrow empty';
+    row.textContent = `seat ${i + 1} — open (share the code)`;
+    list.appendChild(row);
+  }
+  // host config
+  $('lobby-config').classList.toggle('hidden', !netLobby.isHost);
+  if (netLobby.isHost) {
+    $('btn-mode-ffa').classList.toggle('sel', netLobby.config.mode === 'ffa');
+    $('btn-mode-teams').classList.toggle('sel', netLobby.config.mode === 'teams');
+    $('lobby-cpus').textContent = netLobby.config.cpus;
+  }
+  // start — host only, needs all-ready + 2+ fighters
+  const startBtn = $('btn-lobby-start');
+  startBtn.classList.toggle('hidden', !netLobby.isHost);
+  if (netLobby.isHost) {
+    const ok = netLobby.allReady();
+    startBtn.disabled = !ok;
+    startBtn.textContent = ok ? `START MATCH (${humans.length + netLobby.config.cpus} fighters)` : 'WAITING FOR READY…';
+  }
+  const n = humans.length + netLobby.config.cpus;
+  $('lobby-hint').textContent =
+    `${humans.length}/4 players · ${n} fighter${n === 1 ? '' : 's'} total` +
+    (netLobby.config.mode === 'teams' ? ' · red: seats 1-2, blue: seats 3-4' : '');
+}
+
+function startNetMatch(seed, slots, myIdx) {
+  stopNetTimers();
+  destroyGame();
+  show(null);
+  showHud(true);
+  lastWasCampaign = false;
+  const playerCount = slots.filter((s) => typeof s.ctrl === 'string' && s.ctrl.startsWith('net')).length;
+  const isHost = netLobby ? netLobby.isHost : true;
+  game = createGame({
+    slots: slots.map((s) => ({ ...s })),
+    scene, seed,
+    onEnd: (result) => {
+      showHud(false);
+      $('results-winner').textContent = `${result.winner.name.toUpperCase()} WINS`;
+      $('results-sub').textContent = result.reason === 'time' ? 'time up' : 'last one standing';
+      $('btn-next-stage').classList.add('hidden');
+      $('btn-rematch').classList.add('hidden');
+      sfx.select();
+      show('screen-results');
+    },
+    onPause: (paused) => { if (paused) show('screen-pause'); else show(null); },
+    onHud: renderHud,
+  });
+  // HUD player names
+  game._netNames = {};
+  if (netLobby) {
+    for (const s of slots) {
+      const p = netLobby.players.find((x) => 'net' + x.idx === s.ctrl);
+      if (p) game._netNames[s.ctrl] = p.name;
+    }
+  }
+  netDriver = new NetDriver({
+    game, myIdx, playerCount, isHost, seed,
+    send: (m) => { if (netTransport) netTransport.send(m); },
+    sampleLocal: () => sampleLocalInput(),
+    onWaiting: (w) => $('net-waiting').classList.toggle('hidden', !w),
+    onEvent: (e) => { if (e === 'resync') toast('Resyncing…'); },
+  });
+  netMsgHandler = (msg) => netDriver.onMessage(msg);
+  $('net-waiting').classList.add('hidden');
+  // v0.11: pause is disabled online (would desync) — offer a leave button instead
+  $('btn-net-leave').classList.remove('hidden');
+  if (DEBUG) window.__sv.net = { driver: netDriver, lobby: netLobby };
+  toast(isHost ? 'Match started (you are host)' : 'Match started!');
+}
+
+function leaveLobby() {
+  stopNetTimers();
+  if (netLobby) { try { netLobby.leave(); } catch (e) {} }
+  netTransport = null; netLobby = null; netDriver = null; netMsgHandler = null;
+  if (game && game._net) { destroyGame(); }
+  show('screen-title');
+}
+
 // ------------------------------------------------------------ game lifecycle
 
 function renderHud(s) {
@@ -366,7 +598,8 @@ function renderHud(s) {
     const d = document.createElement('div');
     d.className = 'hchip';
     d.style.borderColor = f.color;
-    const ctrlTag = f.ctrl === 'cpu' ? 'CPU' : f.ctrl.toUpperCase();
+    // v0.11: online chips show the player's name
+    const ctrlTag = f.ctrl === 'cpu' ? 'CPU' : (f.pname || f.ctrl.toUpperCase());
     d.innerHTML = `<div class="hud-name" style="color:${f.color}">${f.name} · ${ctrlTag}</div>
       <div class="hud-pct" style="color:${f.color}">${Math.floor(f.percent)}%</div>
       <div class="hud-stocks">${'●'.repeat(Math.max(0, f.stocks))}</div>`;
@@ -493,6 +726,10 @@ function destroyGame() {
 }
 
 function quitToTitle() {
+  // v0.11: leaving an online match/session drops the transport too
+  stopNetTimers();
+  if (netTransport) { try { netTransport.leave(); } catch (e) {} }
+  netTransport = null; netLobby = null; netDriver = null; netMsgHandler = null;
   destroyGame();
   show('screen-title');
 }
@@ -502,6 +739,37 @@ function quitToTitle() {
 $('btn-1p').addEventListener('click', () => { sfx.select(); openSelect('cpu'); });
 $('btn-2p').addEventListener('click', () => { sfx.select(); openSelect('versus'); });
 $('btn-campaign').addEventListener('click', () => { sfx.select(); openCampaign(); });
+// v0.11: online netplay
+$('btn-online').addEventListener('click', () => { sfx.select(); openOnline(); });
+$('btn-online-back').addEventListener('click', () => { sfx.uiMove(); show('screen-title'); });
+$('btn-net-create').addEventListener('click', () => { sfx.select(); createLobby(); });
+$('btn-net-join').addEventListener('click', () => { sfx.select(); joinLobby(); });
+$('net-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinLobby(); });
+$('btn-lobby-leave').addEventListener('click', () => { sfx.uiMove(); leaveLobby(); });
+// v0.11: leave button during net matches (pause is disabled online)
+$('btn-net-leave').addEventListener('click', () => { sfx.uiMove(); quitToTitle(); });
+$('btn-copy-link').addEventListener('click', () => {
+  if (!netLobby) return;
+  const url = location.origin + location.pathname + '#net=' + netLobby.code;
+  const done = () => toast('Invite link copied — send it to your friend');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done, () => toast('Copy failed: ' + url, true));
+  } else { toast(url); }
+  sfx.select();
+});
+$('btn-mode-ffa').addEventListener('click', () => { sfx.uiMove(); if (netLobby && netLobby.isHost) netLobby.hostSetConfig({ mode: 'ffa' }); });
+$('btn-mode-teams').addEventListener('click', () => { sfx.uiMove(); if (netLobby && netLobby.isHost) netLobby.hostSetConfig({ mode: 'teams' }); });
+$('btn-cpu-inc').addEventListener('click', () => { sfx.uiMove(); if (netLobby && netLobby.isHost) netLobby.hostSetConfig({ cpus: netLobby.config.cpus + 1 }); });
+$('btn-cpu-dec').addEventListener('click', () => { sfx.uiMove(); if (netLobby && netLobby.isHost) netLobby.hostSetConfig({ cpus: netLobby.config.cpus - 1 }); });
+$('btn-lobby-start').addEventListener('click', () => {
+  sfx.select();
+  if (!netLobby || !netLobby.isHost) return;
+  const r = netLobby.hostStart();
+  if (r) {
+    const me = netLobby.myPlayer();
+    startNetMatch(r.seed, r.slots, me ? me.idx : 0);
+  }
+});
 $('btn-camp-back').addEventListener('click', () => { sfx.uiMove(); show('screen-title'); });
 $('btn-coop1').addEventListener('click', () => { sfx.uiMove(); campCoop = false; openCampaign(); });
 $('btn-coop2').addEventListener('click', () => { sfx.uiMove(); campCoop = true; openCampaign(); });
@@ -601,6 +869,8 @@ rosterReady = initRoster().catch((err) => {
 });
 
 show('screen-title');
+// v0.11: invite links carry the lobby code in the hash
+if (location.hash.match(/#net=([A-Z0-9]{6})/i)) openOnline();
 const clock = new THREE.Clock();
 let menuT = 0;
 

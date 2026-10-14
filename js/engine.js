@@ -11,15 +11,16 @@ import { STRIKE_LIMB } from './moves.js';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
-  chargeGlowTick, chargeGlowClear,
+  chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
 } from './fx.js';
 import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js';
 import { Input } from './input.js';
 import { sfx } from './audio.js';
+import { mulberry32 } from './rng.js';
 
-const TICK = 1 / 60;
+export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
                                 // stage is 14u wide, blast at +/-13 — see PLAYTEST.md)
 const STAGE = { x0: -7, x1: 7, top: 0 };
@@ -73,9 +74,12 @@ function readHuman(p) {
   };
 }
 
+// v0.11: netplay samples the local P1 keyboard per sim tick.
+export { readHuman };
+
 // ---------------------------------------------------------------- CPU AI
 
-function thinkAI(f, foe, a) {
+function thinkAI(game, f, foe, a) {
   const h = blankHold();
   if (!foe) return h; // v0.9: no living opponent (game is about to end)
 
@@ -114,7 +118,7 @@ function thinkAI(f, foe, a) {
   if (P === PERS.camper && adx < 4.5 && adx > 0.7) {
     h[dx > 0 ? 'left' : 'right'] = true; // keep your distance
   } else if (adx > 0.7) h[dx > 0 ? 'right' : 'left'] = true;
-  const r = Math.random();
+  const r = game._rng();
 
   if (adx < 2.6 && ady < 2.6) {
     // in range — fight
@@ -157,11 +161,11 @@ function thinkAI(f, foe, a) {
   return h;
 }
 
-function aiControl(f, foe) {
+function aiControl(game, f, foe) {
   const a = f._ai;
   let h;
   if (a.cool > 0) { a.cool--; h = Object.assign({}, a.hold); }
-  else { a.cool = 12; h = thinkAI(f, foe, a); a.hold = h; }
+  else { a.cool = 12; h = thinkAI(game, f, foe, a); a.hold = h; }
   for (const k in a.tap) if (a.tap[k]) h[k] = true; // one-shot presses
   a.tap = {};
   if (a.shieldTap) { h.shield = true; a.shieldTap = false; } // v0.3: roll trigger
@@ -215,7 +219,16 @@ export function createGame(opts) {
     onTick = null,
     onKO = null,
     onTimeUp = null,
+    // v0.11: netplay — fixed seed makes the whole sim (AI, spawns)
+    // deterministic across clients. Null = random seed (offline).
+    seed = null,
   } = opts;
+
+  // v0.11: the single gameplay RNG stream. Everything in the sim path
+  // (AI decisions, spawn positions) draws from here; visual-only code
+  // (particles, camera shake) keeps Math.random.
+  const usedSeed = (seed == null ? (Math.random() * 0x7fffffff) | 0 : seed) >>> 0;
+  let rng = mulberry32(usedSeed);
 
   initFX(scene);
   const stageGroup = buildStage(scene);
@@ -235,18 +248,39 @@ export function createGame(opts) {
   const PORT_COLORS = [0xff3b30, 0x0a84ff, 0xffcc00, 0x30d158, 0xbf5af2, 0xff9f0a, 0x64d2ff, 0xff375f];
   const TEAM_COLORS = { red: 0xff3b30, blue: 0x0a84ff };
   const fighters = [];
-  let si = 0;
-  for (const s of slotDefs) {
-    if (s.ctrl === 'closed' || fighters.length >= 8) continue;
-    const f = createFighter(s.def);
-    f.slot = si; f.ctrl = demo ? 'cpu' : s.ctrl; f.team = s.team || null;
-    f._slotCfg = s; // v0.10: retained so mods apply in the init pass below
-    f._portColor = '#' + new THREE.Color(
-      f.team ? TEAM_COLORS[f.team] : PORT_COLORS[si % PORT_COLORS.length]
-    ).getHexString();
-    si++;
-    fighters.push(f);
-  }
+  // v0.11: spawn factored for resync — resetSim() tears down and rebuilds
+  // from the same slot list with a fresh RNG stream.
+  const spawnFighters = () => {
+    for (const f of fighters) {
+      try {
+        if (f._shieldMesh) { f.root.remove(f._shieldMesh); f._shieldMesh = null; }
+        if (f.root && f.root.parent) f.root.parent.remove(f.root);
+        if (f._portRing) {
+          if (f._portRing.parent) f._portRing.parent.remove(f._portRing);
+          f._portRing.geometry.dispose(); f._portRing.material.dispose();
+          f._portRing = null;
+        }
+        if (f.vrm && f.vrm.vrm && f.vrm.vrm.scene && f.vrm.vrm.scene.parent) {
+          f.vrm.vrm.scene.parent.remove(f.vrm.vrm.scene);
+        }
+        f.vrm = null; f._isVRM = false;
+      } catch (e) { /* teardown best-effort */ }
+    }
+    fighters.length = 0;
+    let si = 0;
+    for (const s of slotDefs) {
+      if (s.ctrl === 'closed' || fighters.length >= 8) continue;
+      const f = createFighter(s.def);
+      f.slot = si; f.ctrl = demo ? 'cpu' : s.ctrl; f.team = s.team || null;
+      f._slotCfg = s; // v0.10: retained so mods apply in the init pass below
+      f._portColor = '#' + new THREE.Color(
+        f.team ? TEAM_COLORS[f.team] : PORT_COLORS[si % PORT_COLORS.length]
+      ).getHexString();
+      si++;
+      fighters.push(f);
+    }
+    fighters.forEach((f, i) => initGameFighter(f, i));
+  };
 
   // v0.10: per-fighter init extracted so addFighter() (mid-match spawns for
   // campaign spawners) reuses the exact same setup.
@@ -316,7 +350,7 @@ export function createGame(opts) {
     f._portRing = ring;
     syncRoot(f);
   };
-  fighters.forEach((f, i) => initGameFighter(f, i));
+  spawnFighters();
 
   const game = {
     state: 'countdown',           // countdown -> fight -> done
@@ -328,6 +362,16 @@ export function createGame(opts) {
     _cd: 100,                    // countdown ticks (~1.7s of 3-2-1)
     _timer: (matchTime || MATCH_TIME) * 60, // v0.10: campaign overrides
     _human: [blankHold(), blankHold()],
+    // v0.11 netplay: seeded RNG (AI + spawns), original slot cfgs (resync
+    // replay rebuilds from these), net driver (null offline), per-tick
+    // remote inputs, and the silent flag (resync replay suppresses sfx/HUD/
+    // onEnd side effects while re-simulating).
+    _rng: rng,
+    _seed: usedSeed,
+    _slotList: slotDefs.map((s) => ({ ...s })),
+    _net: null,
+    _netInput: null,
+    _silent: false,
     // v0.10: campaign hooks + mid-match spawner state
     _onTick: onTick,
     _onKO: onKO,
@@ -342,7 +386,7 @@ export function createGame(opts) {
     update(dt) {
       if (this.paused || this.state === 'done') return;
       this._acc = Math.min(this._acc + dt, 0.25);
-      this._human = [readHuman(1), readHuman(2)]; // sample once per frame
+      if (!this._net) this._human = [readHuman(1), readHuman(2)]; // sample once per frame
       // v0.4 render interpolation: snapshot pre-tick positions so the render
       // pass can sit between ticks — kills judder on >60Hz displays where the
       // tick pattern would otherwise land unevenly across frames.
@@ -350,9 +394,16 @@ export function createGame(opts) {
       const cp = this.camera.position;
       this._camPx = cp.x; this._camPy = cp.y; this._camPz = cp.z;
       let n = 0;
-      while (this._acc >= TICK && n < 5) {
-        this._acc -= TICK; n++;
-        this.tick();
+      if (this._net) {
+        // v0.11: the net driver paces ticks — it samples the local input,
+        // broadcasts it, and only steps when every remote input for the tick
+        // has arrived (brief "waiting" instead of rollback).
+        n = this._net.pollTicks(this);
+      } else {
+        while (this._acc >= TICK && n < 5) {
+          this._acc -= TICK; n++;
+          this.tick();
+        }
       }
       if (n === 5) this._acc = 0; // shed backlog, no spiral
       const alpha = Math.max(0, Math.min(1, this._acc / TICK));
@@ -403,12 +454,15 @@ export function createGame(opts) {
       updateDamageNumbers(this.camera);
       if (this._vignT > 0) this._vignT--;
       setVignette(this._vignT > 0 ? this._vignT / 22 : 0);
-      this.pushHud();
+      // v0.11: silent resync replay skips HUD churn (thousands of ticks).
+      if (!this._silent) this.pushHud();
       // v0.10: campaign manager tick (spawners, boss brain, clear/fail).
       if (this._onTick) this._onTick(this);
     },
 
     setPaused(v) {
+      // v0.11: no pausing online — a pause would desync the input streams.
+      if (this._net) return;
       if (this.state !== 'fight') return;
       this.paused = v;
       onPause(v);
@@ -428,7 +482,9 @@ export function createGame(opts) {
       f._slotCfg = cfg;
       fighters.push(f);
       initGameFighter(f, f.slot);
-      f.x = cfg.x !== undefined ? cfg.x : (Math.random() * 6 - 3);
+      // v0.11: seeded (was Math.random) — campaign spawns stay in lockstep
+      // with everything else when a seed is fixed.
+      f.x = cfg.x !== undefined ? cfg.x : (rng() * 6 - 3);
       f.y = 7; f.vx = 0; f.vy = 0;
       f.percent = 0; f.invuln = 90; f.onGround = false;
       setState(f, 'respawn');
@@ -453,6 +509,8 @@ export function createGame(opts) {
         name: f.name, percent: Math.floor(f.percent), stocks: f.stocks,
         shield: f.shieldHP / SHIELD_MAX,
         team: f.team, ctrl: f.ctrl, slot: f.slot, color: f._portColor,
+        // v0.11: online player name for the HUD chip (null offline)
+        pname: (this._netNames && this._netNames[f.ctrl]) || null,
       });
       // v0.9: HUD is a fighter array (main.js builds chips); p1/p2 kept for
       // the legacy 2-fighter shape.
@@ -471,7 +529,81 @@ export function createGame(opts) {
     finish(result) {
       if (this.state === 'done') return;
       this.state = 'done';
-      onEnd(result);
+      // v0.11: silent resync replay must not pop the results screen.
+      if (!this._silent) onEnd(result);
+    },
+
+    // v0.11: canonical state hash for netplay divergence detection.
+    // Every gameplay-relevant field, floats rounded to 3 decimals (absorbs
+    // any last-ulp trig differences between JS engines — kb.js launchVelocity
+    // uses Math.sin/cos, which IEEE doesn't pin down). Bone/visual state is
+    // excluded: hitboxes derive from the analytic attackPose each tick, so
+    // bones are a pure function of the hashed fields.
+    stateHash() {
+      const r3 = (v) => Math.round(v * 1000) / 1000;
+      const pk = (h) => {
+        if (!h) return 0;
+        let b = 0;
+        if (h.left) b |= 1; if (h.right) b |= 2; if (h.up) b |= 4;
+        if (h.down) b |= 8; if (h.jump) b |= 16; if (h.attack) b |= 32;
+        if (h.smash) b |= 64; if (h.special) b |= 128; if (h.shield) b |= 256;
+        return b;
+      };
+      const P = ['tick', 'timer', 'cd', 'state', this._tick, this._timer, this._cd, this.state];
+      for (const f of fighters) {
+        const ai = f._ai || {};
+        P.push(
+          'f', f.slot, r3(f.x), r3(f.y), r3(f.vx), r3(f.vy), f.facing,
+          r3(f.percent), f.stocks, f.state, f.stateFrame, f.moveId || '-',
+          f.moveFrame, f.onGround ? 1 : 0, f.jumpsUsed, Math.round(f.shieldHP),
+          f.invuln, f.hitPause, pk(f._prevH), f._dropT || 0,
+          f._fastFalling ? 1 : 0, f._squatAir ? 1 : 0,
+          f._lastShieldPress, f._shieldStartTick || 0,
+          f._canGrabLedge ? 1 : 0, Math.round((f._chargeT || 0) * 1000) / 1000,
+          Math.round((f._chargeMult || 0) * 1000) / 1000,
+          f._grabber ? f._grabber.slot : -1, f._victim ? f._victim.slot : -1,
+          f._grabDur || 0, f._grabConnected ? 1 : 0, f._pummelCD || 0,
+          f._rollDir || 0, f._hitstunDur || 0,
+          f._aiPersonality || '', ai.cool || 0, pk(ai.hold),
+          Object.keys(ai.tap || {}).sort().join('+'),
+          ai.shieldT || 0, ai.usedUpB ? 1 : 0, ai.shieldTap ? 1 : 0,
+          [...(f._hitSet || [])].map((o) => o.slot).sort((a, b) => a - b).join('.'),
+          f._plat ? PLATS.indexOf(f._plat) : -1,
+          f._modScale || 1, Math.round((f._kbDealtMul || 1) * 1000) / 1000,
+          Math.round((f._kbTakenMul || 1) * 1000) / 1000,
+          f._superArmor ? 1 : 0, r3(f._hurtW || 0), r3(f._hurtH || 0)
+        );
+      }
+      P.push('shake', this._shakeT, this._shakeDur, Math.round(this._shakeAmp * 1e6));
+      P.push('vign', this._vignT);
+      P.push('ko', this._koFx ? [this._koFx.t, this._koFx.dur, r3(this._koFx.x), r3(this._koFx.y)].join(',') : '-');
+      for (const p of peekProjectiles()) {
+        P.push('p', r3(p.x), r3(p.y), r3(p.vx), r3(p.vy),
+          Math.round(p.life * 1000) / 1000, p.dir || 0, p.dead ? 1 : 0,
+          p.dmg || 0, p.angle || 0);
+      }
+      return P.join('|');
+    },
+
+    // v0.11: tear down and rebuild the sim from the original slot list with
+    // a fresh RNG stream, for authoritative resync replay (host input log).
+    // Visual-only; the caller replays ticks silently afterwards.
+    resetSim(seed) {
+      rng = mulberry32(seed >>> 0);
+      this._rng = rng;
+      this._seed = seed >>> 0;
+      clearFX();
+      spawnFighters();
+      this._tick = 0;
+      this._timer = (matchTime || MATCH_TIME) * 60;
+      this._cd = 100;
+      this.state = 'countdown';
+      this.paused = false;
+      this._acc = 0;
+      this._human = [blankHold(), blankHold()];
+      this._netInput = null;
+      this._shakeT = 0; this._shakeDur = 1; this._shakeAmp = 0;
+      this._koFx = null; this._vignT = 0;
     },
 
     timeUp() {
@@ -968,7 +1100,14 @@ function inputFor(game, f, foes) {
   if (f.ctrl === 'cpu') {
     const foe = nearestFoe(f, foes);
     if (!foe) return blankHold();
-    return aiControl(f, foe);
+    return aiControl(game, f, foe);
+  }
+  // v0.11: online humans — input comes from the netcode's per-tick buffer,
+  // never the local keyboard. Copy: stepFighter stores it as _prevH, so the
+  // buffer object itself must not be aliased.
+  if (typeof f.ctrl === 'string' && f.ctrl.startsWith('net')) {
+    const ni = game._netInput ? game._netInput[+f.ctrl.slice(3)] : null;
+    return ni ? Object.assign({}, ni) : blankHold();
   }
   return game._human[f.ctrl === 'p1' ? 0 : 1];
 }

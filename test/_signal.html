@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>smashvr signal test</title>
+<script type="importmap">
+{ "imports": {
+    "three": "../js/vendor/three.module.js",
+    "three/addons/": "../js/vendor/three_addons/",
+    "@pixiv/three-vrm": "../js/vendor/three-vrm.module.min.js"
+} }
+</script></head><body>
+<div id="sig-status">booting…</div>
+<script type="module">
+import { createNetTransport } from '../js/netplay.js';
+window.__sig = { log: [], transport: null, error: null, done: false };
+const log = (m) => { window.__sig.log.push(m); document.getElementById('sig-status').textContent = m; };
+try {
+  const code = (location.hash.match(/#room=([A-Z0-9]+)/) || [])[1] || 'SIGTEST';
+  log('import-ok');
+  const t = await createNetTransport(code, {
+    onPeerJoin: (cid, via) => log('peer-join:' + String(cid).slice(0, 8) + ' via ' + via),
+    onPeerLeave: (cid, via) => log('peer-leave:' + String(cid).slice(0, 8) + ' via ' + via),
+    onMessage: (msg) => log('msg:' + JSON.stringify(msg).slice(0, 80)),
+  });
+  window.__sig.transport = t;
+  log('room-joined cid=' + String(t.cid).slice(0, 8));
+  // SDP sanity per AGENTS.md: bare RTCPeerConnection offer proves the
+  // browser WebRTC stack; ICE can never get past checking on this VM (UDP).
+  try {
+    const pc = new RTCPeerConnection();
+    pc.createDataChannel('x');
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    log('sdp-ok type=' + offer.type + ' sdp_len=' + offer.sdp.length);
+    pc.close();
+  } catch (e) { log('sdp-fail ' + e.message); }
+  // send attempt (data channel can't open here — must not throw)
+  setTimeout(() => {
+    try { t.send({ k: 'ping', n: 1 }); log('send-attempted peers=' + t.peerCount()); }
+    catch (e) { log('send-threw ' + e.message); }
+    window.__sig.done = true;
+  }, 5000);
+} catch (e) {
+  window.__sig.error = String((e && e.message) || e);
+  log('fatal ' + window.__sig.error);
+  window.__sig.done = true;
+}
+</script></body></html>

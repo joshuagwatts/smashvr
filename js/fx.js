@@ -248,6 +248,12 @@ export function updateProjectiles(dt) {
   return _projectiles;
 }
 
+// v0.11: read-only projectile access for the netplay state hash — never
+// steps or mutates, unlike updateProjectiles().
+export function peekProjectiles() {
+  return _projectiles;
+}
+
 export function updateFX(dt) {
   updateEffects(dt);
 }
