@@ -15,7 +15,7 @@ import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js';
 import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js';
 import { createFighter } from './fighters.js';
 import { tickFighterVisual, setFighterTheme } from './anim.js';
-import { renameCustom, setCustomKit, deleteCustom } from './roster.js';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry } from './roster.js';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
@@ -237,6 +237,12 @@ export function openLab(containerEl, onClose) {
   btRow.appendChild(el('span', 'Body type:'));
   btRow.appendChild(btBadge);
   btRow.appendChild(btSel);
+  // v0.8: import-pose badge — the A/T classification the auto-rigger
+  // detected for this custom slot (built-ins are T-pose procedural rigs).
+  const poseBadge = el('span', '');
+  css(poseBadge, { padding: '3px 10px', borderRadius: '20px', fontWeight: '700', letterSpacing: '1px', fontSize: '11px',
+    background: '#b98cff33', color: '#d9c2ff', border: '1px solid #b98cff' });
+  btRow.appendChild(poseBadge);
   leftCol.appendChild(btRow);
 
   function effectiveBodyType() {
@@ -252,6 +258,18 @@ export function openLab(containerEl, onClose) {
       color: type === 'floater' ? '#b9f3ff' : '#43d17c',
       border: `1px solid ${type === 'floater' ? '#5e7bff' : '#43d17c'}`,
     });
+    renderPoseBadge();
+  }
+  // v0.8: import-pose badge for custom slots.
+  function renderPoseBadge() {
+    const entry = getCustomEntry(defId);
+    const p = entry && entry.pose;
+    if (p) {
+      poseBadge.textContent = p === 'unknown' ? 'POSE: ?' : `POSE: ${p}`;
+      poseBadge.style.display = '';
+    } else {
+      poseBadge.style.display = 'none';
+    }
   }
 
   const themeRow = el('div');

@@ -104,7 +104,7 @@ export function isCustom(defId) {
 export function listCustoms() {
   return [...registry.values()].map((e) => ({
     id: e.id, name: e.name, filename: e.filename,
-    sourceType: e.sourceType, bodyType: e.bodyType, kit: e.kit,
+    sourceType: e.sourceType, bodyType: e.bodyType, kit: e.kit, pose: e.pose || null,
   }));
 }
 
@@ -126,6 +126,8 @@ export async function importCharacter(file) {
     sourceType: ext === 'vrm' ? 'vrm' : 'glb',
     bodyType: existing ? existing.bodyType
       : ((data.autorig && data.autorig.bodyType) || 'biped'),
+    // v0.8: detected import pose (T/A/unknown) for the Lab badge.
+    pose: (data.autorig && data.autorig.pose) || null,
     kit: existing ? existing.kit : 'ronin',
     blob: file,
     addedAt: existing ? existing.addedAt : Date.now(),
@@ -133,7 +135,7 @@ export async function importCharacter(file) {
   await idbPut(rec);
   registerDef(rec);
   registry.get(id).data = data; // cache the just-loaded model
-  return { id, name: rec.name, updated: !!existing, bodyType: rec.bodyType };
+  return { id, name: rec.name, updated: !!existing, bodyType: rec.bodyType, pose: rec.pose, sourceType: rec.sourceType };
 }
 
 // Loaded model data for a custom def, loading from the stored blob on demand.

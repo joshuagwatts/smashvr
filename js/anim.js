@@ -11,6 +11,10 @@ import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js';
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
 const _stw = new THREE.Vector3();
+// v0.8: A-pose compensation scratch — post-multiply the upper-arm delta by
+// the un-droop rotation (see applyPose).
+const _unDroop = new THREE.Quaternion();
+const _zAxis = new THREE.Vector3(0, 0, 1);
 
 const lerp = (a, b, u) => a + (b - a) * u;
 // v0.4: smoothstep easing for keyframe interpolation — poses accelerate out
@@ -72,7 +76,9 @@ export function attackPose(move, moveFrame) {
   return out;
 }
 
-function locomotionPose(f, t) {
+// Exported for the rest×delta test (test/autorig.mjs) — the analytic idle
+// pose the game layers onto a fighter.
+export function locomotionPose(f, t) {
   // v0.6: floaters (ghosts/bugs) don't run — they glide. Hover bob is applied
   // to the root in engine.js; here: forward glide tilt, swept-back arms,
   // gentle idle sway. Missing leg bones are simply never posed (applyPose
@@ -339,6 +345,13 @@ export function applyPose(f, eulerDict) {
     // identity-rest rigs (procedural, auto-rigged) rest*delta === delta,
     // so their behavior is unchanged.
     ensureVrmRest(f);
+    // v0.8: A-pose compensation. Auto-rigged characters record per-side arm
+    // droop (radians below horizontal) on the pseudo-VRM. The game's
+    // keyframes are authored for T-pose rests; post-multiplying the upper-arm
+    // delta by the un-droop rotation makes an A-pose import strike/idle
+    // exactly like the procedural rig instead of punching droop-degrees off.
+    // Real VRMs carry no droop record and are untouched.
+    const droop = (f.vrm && f.vrm.vrm && f.vrm.vrm.droop) || null;
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
       if (!e) continue;
@@ -346,6 +359,14 @@ export function applyPose(f, eulerDict) {
       const rest = f._vrmRest[b];
       if (!node || !rest) continue; // optional bones may be missing
       _delta.setFromEuler(_euler.set(e[0], e[1], e[2]));
+      if (droop && (b === 'upperArmL' || b === 'upperArmR')) {
+        const side = b === 'upperArmL' ? 'L' : 'R';
+        const d = droop[side] || 0;
+        if (d > 1e-4) {
+          _unDroop.setFromAxisAngle(_zAxis, (side === 'L' ? 1 : -1) * d);
+          _delta.multiply(_unDroop);
+        }
+      }
       node.quaternion.copy(rest).multiply(_delta);
     }
   } else if (f.rig) {

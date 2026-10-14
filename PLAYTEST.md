@@ -842,13 +842,87 @@ attaching em to p1 ronin guy."
 - v0.6.2 wrapper kept: `createFighter` root is a `THREE.Group` wrapping `rig.group`.
 
 ### Verification (node suites)
-All 14 suites green (see v0.7 above). Browser verification (import Mushy.vrm + 2nd file,
-custom-vs-custom, custom-vs-VOLT, wrapper holds, delete, reload persistence) pending —
-requires live browser; flagged for follow-up.
+All 14 suites green (see v0.7 above).
+
+### Browser verification (2026-10-14, headless Chromium vs working tree)
+- Import Mushy.vrm → toast "MUSHY added to roster", CUSTOM card with tag on both
+  select groups; second file → second card. All via the real file-picker UI.
+- custom_mushy (P1) vs VOLT (CPU): fight runs, `f._isVRM`, `rig.group.visible === false`,
+  VRM scene visible — v0.6.2 wrapper holds. HUD shows "MUSHY · P1". Zero page errors.
+- Combat on the custom VRM: 2P versus (P2 idle), P1 jab → `attack/jab` state seen,
+  P2 percent 0 → 2 (hit connects through the skeleton-driven hitbox). Zero errors.
+- Lab: MUSHY def button present; selecting it reveals the custom row (rename/kit/delete);
+  Delete slot → confirm dialog → `listCustoms()` = 0.
+- Persistence: import → reload (same session) → custom_mushy card rebuilt from
+  IndexedDB; delete → reload → gone.
+- Screenshots: /tmp/roster-fight1.png (MUSHY vs VOLT), /tmp/custom-attack.png.
 
 ### Honest gaps
 - Wisp anchors deviate from volt's kick positions (≤0.87u on uair) — honest to the body,
   but a balance delta vs the v0.2-tuned kick placements. Worth a feel check.
 - Roster: no model preview in Lab (procedural rig shown); import is title-screen only;
   custom-vs-custom mirror uses identical models (no alt).
+- Audio never heard headless; CPU AI quality unevaluated (standing gaps).
+
+## v0.8 — explicit A/T pose detection (2026-10-14)
+Joshua's directive: the importer "needs to determine a or t pose to appropriately
+rig the character for the game."
+
+### Classification rule (js/autorig.js)
+- Per side: arm mesh ray = centroid of the arm-band verts → shoulder anchor.
+  droop = asin(clamp(-dir.y)) in radians (angle below horizontal).
+- Character pose from the mean per-side droop: **T < 15°**, **A 15–70°**,
+  **>70° → 'unknown'** (honest warning, best-effort fit).
+- Recorded as `rec.autorig.pose` ('T'/'A'/'unknown'), `rec.autorig.armDroopDeg`
+  {L,R}, and `rec.vrm.droop` {L,R} radians on the pseudo-VRM. The v0.5.1
+  blob-warning path and all honest limits are kept.
+
+### Pose-aware joint fitting (js/autorig.js)
+- Shoulder/elbow/wrist are fitted ALONG the detected arm-direction ray per
+  side — wrist at the ray's measured end (`tMax`), elbow at 0.52·tMax with a
+  0.5·bulge nudge — instead of the old roughly-horizontal assumption.
+  Asymmetric poses (left T, right A-45°) fit each arm along its own ray.
+- Leg sanity (bipeds only): 2D PCA over each leg's windowed verts; warns if the
+  principal axis deviates >20° from vertical (sitting/crossed legs rig poorly).
+  Warning only, never a block.
+
+### Rest-pose contract (js/anim.js `applyPose`)
+- Bone rest orientations stay identity; joint POSITIONS define the A/T shape —
+  the game treats the detected pose as neutral.
+- VRM path: upper-arm deltas are post-multiplied by an un-droop quaternion
+  (RotZ(∓droop)) per side, so authored T-pose keyframes produce identical world
+  motion on A-pose imports (A-45° idle arm: 48.7° below horizontal, same as the
+  procedural rig — not snapped toward horizontal, not droop-degrees off).
+  Real VRMs (no droop record) and the procedural rig are untouched.
+
+### UI (js/main.js, js/roster.js, js/lab.js)
+- Import toast: "A-pose detected — rigged for A-pose" / "T-pose detected —
+  rigged for T-pose" / "unusual arm pose — best-effort rig"; real .vrm files get
+  their own honest line ("VRM attached — artist-rigged model", no auto-rig).
+- Import-status line under the picker names the detected pose; Lab shows a
+  POSE: A / POSE: T / POSE: ? badge per custom slot (persisted in IndexedDB).
+
+### Verification (node suites)
+- autorig 73/73 (was 34): T-pose joints within 0.05u of the ±X ray, wrist at the
+  measured arm end; A-pose at 30°/45°/60° within 0.05u of the droop ray;
+  asymmetric (L=T, R=A-45°) per-side rays correct; arms-down → 'unknown' +
+  >70° warning; bent leg (30°) warns, straight legs silent; rest×delta idle
+  test — A-45° arm within 10° of the A ray (48.7°, not snapped to horizontal),
+  T idle unaffected by compensation.
+- Zero regressions: bodytype 20/20, vrm_rest 8/8, test_logic 14/14, playtest
+  19/19, feel_v02 11/11, feel_v03 40/40, feel_v04 22/22, color_v03 27/27,
+  angle_bands pass, kb_scaling pass, rebalance 18/18, anim_phases 9/9 PASS,
+  hitbox_sync 418 @ 0.25u, 0 failures.
+
+### Browser verification — PENDING (needs a live browser; subagent has none)
+- Import an A-pose GLB via the picker → expect "A-pose detected" toast +
+  import-status line; Lab → POSE: A badge; idle screenshot of the A-pose custom
+  fighter.
+
+### Honest gaps
+- T-pose synthetic measures ~4° droop (rigger's 0.80H shoulder-height assumption
+  vs arm meshes that sit slightly lower) — classification unaffected (<15°),
+  compensation imperceptible.
+- Real .vrm files are never pose-classified (artist-rigged; the game treats
+  their rest as neutral via rest×delta) — the toast says so honestly.
 - Audio never heard headless; CPU AI quality unevaluated (standing gaps).

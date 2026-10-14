@@ -5,9 +5,11 @@
 // bones, and returns a pseudo-VRM record so the existing, already-verified
 // VRM attach/pose/detach path (vrm.js + anim.js) works unchanged:
 //
-//   { vrm: { scene, humanoid: { getNormalizedBoneNode, resetNormalizedPose }, update },
+//   { vrm: { scene, humanoid: { getNormalizedBoneNode, resetNormalizedPose },
+//             update, droop: { L, R } (arm droop below horizontal, radians) },
 //     vrm0: false,
-//     autorig: { pose: 'T'|'A'|'?', warnings: [...], notice: '...', ok: bool } }
+//     autorig: { pose: 'T'|'A'|'unknown', bodyType, warnings: [...],
+//                notice: '...', ok: bool, boneCount: n } }
 //
 // HONEST LIMITS (v1):
 // - T-pose / A-pose humanoids only. Anything else gets a warning and
@@ -147,6 +149,14 @@ export function autoRigScene(scene) {
   const shoulderY = Y(0.80);
   const armDir = {};
   const armShoulderY = {};
+  // v0.8: per-side ray measurements for pose-aware fitting.
+  // armRay[side] = { tMax, bulge } — tMax = wrist extent along the ray from
+  // the shoulder; bulge = perpendicular offset of the most-bent mid-ray
+  // point (for elbow placement on bent arms). null when the arm was guessed.
+  const armRay = {};
+  // v0.8: per-side droop below horizontal (radians). Stored on the pseudo-VRM
+  // so the game can compensate authored T-pose keyframes (anim.js).
+  const droopRad = {};
   let poseScore = 0, poseCount = 0;
   for (const side of ['L', 'R']) {
     const sgn = side === 'L' ? 1 : -1;
@@ -160,11 +170,15 @@ export function autoRigScene(scene) {
       const sY = bodyType === 'floater' ? cy : shoulderY;
       armShoulderY[side] = sY;
       dir = new THREE.Vector3(cx - sx, cy - sY, cz - 0).normalize();
-      poseScore += Math.abs(dir.y);
+      // v0.8: droop = angle of the arm ray below horizontal.
+      const dr = Math.asin(Math.max(-1, Math.min(1, -dir.y)));
+      droopRad[side] = dr;
+      poseScore += dr;
       poseCount++;
       // limb-shape check: a real arm is long and thin along dir; a blobby
       // cap of a non-humanoid mesh is roughly isotropic. Elongation ratio
       // (length along dir vs width across it) below ~2 means "not a limb".
+      // Also records the ray extent (wrist) and bend bulge (elbow).
       {
         let tMn = Infinity, tMx = -Infinity, uMx = 0;
         for (const i of idx) {
@@ -179,18 +193,34 @@ export function autoRigScene(scene) {
         if ((tMx - tMn) / Math.max(1e-6, 2 * uMx) < 2.0) {
           warnings.push('the ' + (side === 'L' ? 'left' : 'right') + ' arm region is not limb-shaped — results may be janky');
         }
+        // bulge: most-bent point in the middle 50% of the ray
+        let bU = -1;
+        const bP = new THREE.Vector3();
+        for (const i of idx) {
+          const rx = VX[i] - sx, ry = VY[i] - sY, rz = VZ[i];
+          const t = rx * dir.x + ry * dir.y + rz * dir.z;
+          if (t < 0.25 * tMx || t > 0.75 * tMx) continue;
+          const px = rx - dir.x * t, py = ry - dir.y * t, pz = rz - dir.z * t;
+          const u = Math.sqrt(px * px + py * py + pz * pz);
+          if (u > bU) { bU = u; bP.set(px, py, pz); }
+        }
+        armRay[side] = { tMax: tMx, bulge: bP };
       }
     } else {
       warnings.push('arm not detected on the ' + (side === 'L' ? 'left' : 'right') + ' side — guessing');
       dir = new THREE.Vector3(sgn, -0.15, 0).normalize();
+      droopRad[side] = Math.asin(0.15);
+      armRay[side] = null;
     }
     armDir[side] = dir;
   }
-  const meanDroop = poseCount ? poseScore / poseCount : 0.15;
-  // T < ~14° droop, A < ~67° droop (margin past 60° for noisy real meshes),
-  // '?' beyond that (genuinely unusual).
-  const pose = meanDroop < 0.25 ? 'T' : meanDroop < 0.92 ? 'A' : '?';
-  if (pose === '?') warnings.push('arms point somewhere unexpected — assuming A-pose-ish');
+  // v0.8: explicit A/T pose classification from the mean arm-ray droop.
+  // T < 15°, A = 15–70°, 'unknown' beyond 70° (arms-down or unusual —
+  // honest warning, best-effort fit). Fitting stays per-side, so asymmetric
+  // poses (one arm T, one A) still fit each arm along its own ray.
+  const meanDroopDeg = poseCount ? (poseScore / poseCount) * 180 / Math.PI : 8.6;
+  const pose = meanDroopDeg < 15 ? 'T' : meanDroopDeg <= 70 ? 'A' : 'unknown';
+  if (pose === 'unknown') warnings.push('arms point down or somewhere unexpected (>70° droop) — best-effort rig, may be janky');
 
   const J = {}; // joint positions, model space
   const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -205,8 +235,19 @@ export function autoRigScene(scene) {
     // proportions don't follow the humanoid 0.80H rule); bipeds use it.
     const sY = bodyType === 'floater' && armShoulderY[side] != null ? armShoulderY[side] : shoulderY;
     const S = V3(sgn * tw, sY, 0);
-    const E = S.clone().addScaledVector(armDir[side], 0.17 * H);
-    const W = E.clone().addScaledVector(armDir[side], 0.15 * H);
+    const dir = armDir[side];
+    // v0.8: fit joints ALONG the detected arm ray — wrist at the measured
+    // ray end, elbow at ~52% with a nudge toward the bend bulge (for bent
+    // arms). Falls back to proportion constants when the arm was guessed.
+    const ray = armRay[side];
+    let E, W;
+    if (ray && ray.tMax > 0.05 * H) {
+      W = S.clone().addScaledVector(dir, ray.tMax);
+      E = S.clone().addScaledVector(dir, 0.52 * ray.tMax).addScaledVector(ray.bulge, 0.5);
+    } else {
+      E = S.clone().addScaledVector(dir, 0.17 * H);
+      W = E.clone().addScaledVector(dir, 0.15 * H);
+    }
     J['upperArm' + side] = S;
     J['lowerArm' + side] = E;
     J['hand' + side] = W;
@@ -240,6 +281,41 @@ export function autoRigScene(scene) {
     // v0.6: for bipeds this is a real warning; for floaters missing legs is
     // the expected condition (first-class type), so stay silent.
     if (bodyType === 'biped' && (legL < 30 || legR < 30)) warnings.push('could not find two legs');
+  }
+  {
+    // v0.8: leg direction sanity — legs should hang straight down. Fit the
+    // leg's direction with 2D PCA over its windowed verts (robust to
+    // low-poly capsules, whose verts clump in the end caps); warn if the
+    // principal axis deviates >20° from vertical (sitting/crossed legs rig
+    // poorly). Warning only, not a block.
+    if (bodyType === 'biped') {
+      for (const side of ['L', 'R']) {
+        const sgn = side === 'L' ? 1 : -1;
+        const hx = sgn * 0.095 * H;
+        const y0 = Y(0.02), y1 = Y(0.55); // full leg extent: PCA needs both end-cap clumps
+        let mx = 0, my = 0, c = 0;
+        const pts = [];
+        for (let i = 0; i < n; i++) {
+          if (VY[i] < y0 || VY[i] > y1) continue;
+          if (VX[i] * sgn <= 0) continue;
+          if (Math.abs(VX[i] - hx) > 0.15 * H) continue; // narrow: deep-A-pose hands stay out
+          pts.push([VX[i], VY[i]]); mx += VX[i]; my += VY[i]; c++;
+        }
+        if (c >= 10) {
+          mx /= c; my /= c;
+          let cxx = 0, cyy = 0, cxy = 0;
+          for (const [x, y] of pts) {
+            const dx = x - mx, dy = y - my;
+            cxx += dx * dx; cyy += dy * dy; cxy += dx * dy;
+          }
+          // principal axis angle from vertical
+          const ang = 0.5 * Math.atan2(2 * cxy, cxx - cyy); // from +X axis
+          const dev = Math.abs(90 - Math.abs(ang * 180 / Math.PI));
+          if (dev > 20) warnings.push(
+            `the ${(side === 'L' ? 'left' : 'right')} leg points ${dev.toFixed(0)}° off vertical — check the import`);
+        }
+      }
+    }
   }
   {
     let c = 0;
@@ -381,15 +457,21 @@ export function autoRigScene(scene) {
       for (const b of ACTIVE_BONES) bones[b].rotation.set(0, 0, 0);
     },
   };
-  const vrm = { scene: rigGroup, humanoid, update: () => {} };
+  // v0.8: per-side arm droop rides on the pseudo-VRM so the game (anim.js)
+  // can compensate authored T-pose keyframes. Rest orientations stay
+  // identity with joint POSITIONS defining the A/T shape — the rest×delta
+  // contract (v0.6.1): the detected pose is neutral, deltas layer onto it.
+  const vrm = { scene: rigGroup, humanoid, update: () => {}, droop: droopRad };
 
   const ok = warnings.length === 0;
+  const posePhrase = pose === 'T' ? 'T-pose' : pose === 'A' ? 'A-pose' : 'unusual arm pose';
   // v0.6: floaters get their own first-class notice (also the import toast).
   const notice = bodyType === 'floater'
-    ? (ok ? 'Auto-rigged — Floater type detected — hover locomotion'
+    ? (ok ? `Auto-rigged — Floater type detected — hover locomotion (${posePhrase})`
           : `Auto-rigged floater with warnings (${warnings[0]}${warnings.length > 1 ? `, +${warnings.length - 1} more` : ''}) — results may be janky`)
-    : ok ? `Auto-rigged — arms detected: ${pose}-pose`
+    : ok ? `Auto-rigged — ${posePhrase} detected — rigged for ${posePhrase}`
           : `Auto-rigged with warnings (${warnings[0]}${warnings.length > 1 ? `, +${warnings.length - 1} more` : ''}) — results may be janky`;
 
-  return { vrm, vrm0: false, autorig: { pose, bodyType, warnings, notice, ok, boneCount: boneList.length } };
+  return { vrm, vrm0: false, autorig: { pose, bodyType, warnings, notice, ok, boneCount: boneList.length,
+    armDroopDeg: { L: +(droopRad.L * 180 / Math.PI).toFixed(1), R: +(droopRad.R * 180 / Math.PI).toFixed(1) } } };
 }

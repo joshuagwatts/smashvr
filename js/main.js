@@ -301,15 +301,21 @@ $('vrm-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file) return;
   try {
-    const { id, name, updated, bodyType } = await importCharacter(file);
+    const { id, name, updated, bodyType, pose, sourceType } = await importCharacter(file);
+    // v0.8: report the detected import pose in the toast. Real .vrm files
+    // are artist-rigged (no auto-rig), so they get their own honest line.
+    const poseTxt = sourceType === 'vrm' ? 'VRM attached — artist-rigged model'
+      : pose === 'A' ? 'A-pose detected — rigged for A-pose'
+      : pose === 'T' ? 'T-pose detected — rigged for T-pose'
+      : 'unusual arm pose — best-effort rig';
     toast(
-      `${name} ${updated ? 'updated' : 'added to roster'} — pick them on the select screen`,
+      `${name} ${updated ? 'updated' : 'added to roster'} — ${poseTxt}`,
       false
     );
     // body-type badge under the import button
     const st = $('import-status');
     if (st) {
-      st.textContent = `${name}: ${bodyType === 'floater' ? 'Floater — hover locomotion' : 'Biped'} (auto-detected)`;
+      st.textContent = `${name}: ${bodyType === 'floater' ? 'Floater — hover locomotion' : 'Biped'} (auto-detected), ${poseTxt}`;
     }
     refreshCards();
     sfx.select();
