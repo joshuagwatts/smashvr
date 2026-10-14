@@ -95,30 +95,44 @@ export function autoRigScene(scene) {
   // ---- 3. joint fitting ----
   const warnings = [];
 
-  // torso half-width from a waist band: low enough that T-pose arms (high)
-  // never reach it, high enough that A-pose arms (which dip to ~0.58H) stay
-  // above it. Legs may set the extent instead of the torso — close enough.
+  // torso half-width: the torso wall is the widest |x| structure present
+  // across nearly the FULL vertical span 0.35H-0.75H. Arms only cross the
+  // top slices, legs only the bottom ones — so vertical continuity separates
+  // them no matter how deep the A-pose droop is. (Max-extent, percentile,
+  // and density-peak estimators all fail once arm intruders get numerous.)
   let tw = 0.13 * H;
   {
-    const idx = band(0.38, 0.50, 0);
-    if (idx.length > 8) {
-      let mn = Infinity, mx = -Infinity;
-      for (const i of idx) { if (VX[i] < mn) mn = VX[i]; if (VX[i] > mx) mx = VX[i]; }
-      tw = Math.max(0.08 * H, (mx - mn) / 2);
+    const SLICES = 8, FA = 0.35, FB = 0.75;
+    const bins = new Map(); // |x| bin (0.01H) -> Map(slice -> count)
+    for (let i = 0; i < n; i++) {
+      const f = (VY[i] - minY) / H;
+      if (f < FA || f > FB) continue;
+      const s = Math.min(SLICES - 1, Math.floor(((f - FA) / (FB - FA)) * SLICES));
+      const b = Math.round(Math.abs(VX[i]) / (0.01 * H));
+      let m = bins.get(b);
+      if (!m) { m = new Map(); bins.set(b, m); }
+      m.set(s, (m.get(s) || 0) + 1);
     }
+    let bestB = -1;
+    for (const [b, m] of bins) {
+      let slices = 0;
+      for (const c of m.values()) if (c >= 3) slices++;
+      if (slices >= SLICES - 1 && b > bestB) bestB = b;
+    }
+    if (bestB > 0) tw = Math.max(0.08 * H, bestB * 0.01 * H);
   }
 
   // arm direction per side from the shoulder band (T-pose = along ±x,
-  // A-pose = angled down-out). Wide vertical band so drooped A-pose arms are
-  // fully visible; the |x| cutoff keeps torso/leg verts out. Model faces +Z,
-  // so anatomical right is -X.
+  // A-pose = angled down-out, supported down to ~60° droop). Band extends
+  // low enough to catch deep A-pose hands; the |x| cutoff keeps torso/leg
+  // verts out. Model faces +Z, so anatomical right is -X.
   const shoulderY = Y(0.80);
   const armDir = {};
   let poseScore = 0, poseCount = 0;
   for (const side of ['L', 'R']) {
     const sgn = side === 'L' ? 1 : -1;
     const sx = sgn * tw;
-    const idx = band(0.52, 0.88, tw * 1.05).filter((i) => VX[i] * sgn > 0);
+    const idx = band(0.44, 0.88, tw * 1.05).filter((i) => VX[i] * sgn > 0);
     let dir;
     if (idx.length >= 12) {
       let cx = 0, cy = 0, cz = 0;
@@ -127,6 +141,24 @@ export function autoRigScene(scene) {
       dir = new THREE.Vector3(cx - sx, cy - shoulderY, cz - 0).normalize();
       poseScore += Math.abs(dir.y);
       poseCount++;
+      // limb-shape check: a real arm is long and thin along dir; a blobby
+      // cap of a non-humanoid mesh is roughly isotropic. Elongation ratio
+      // (length along dir vs width across it) below ~2 means "not a limb".
+      {
+        let tMn = Infinity, tMx = -Infinity, uMx = 0;
+        for (const i of idx) {
+          const rx = VX[i] - sx, ry = VY[i] - shoulderY, rz = VZ[i];
+          const t = rx * dir.x + ry * dir.y + rz * dir.z;
+          const px = rx - dir.x * t, py = ry - dir.y * t, pz = rz - dir.z * t;
+          const u = Math.sqrt(px * px + py * py + pz * pz);
+          if (t < tMn) tMn = t;
+          if (t > tMx) tMx = t;
+          if (u > uMx) uMx = u;
+        }
+        if ((tMx - tMn) / Math.max(1e-6, 2 * uMx) < 2.0) {
+          warnings.push('the ' + (side === 'L' ? 'left' : 'right') + ' arm region is not limb-shaped — results may be janky');
+        }
+      }
     } else {
       warnings.push('arm not detected on the ' + (side === 'L' ? 'left' : 'right') + ' side — guessing');
       dir = new THREE.Vector3(sgn, -0.15, 0).normalize();
@@ -134,7 +166,9 @@ export function autoRigScene(scene) {
     armDir[side] = dir;
   }
   const meanDroop = poseCount ? poseScore / poseCount : 0.15;
-  const pose = meanDroop < 0.25 ? 'T' : meanDroop < 0.62 ? 'A' : '?';
+  // T < ~14° droop, A < ~67° droop (margin past 60° for noisy real meshes),
+  // '?' beyond that (genuinely unusual).
+  const pose = meanDroop < 0.25 ? 'T' : meanDroop < 0.92 ? 'A' : '?';
   if (pose === '?') warnings.push('arms point somewhere unexpected — assuming A-pose-ish');
 
   const J = {}; // joint positions, model space
@@ -165,11 +199,12 @@ export function autoRigScene(scene) {
   {
     // shoulder span measured in the same wide band the arm detector uses —
     // drooped A-pose arms narrow the high band, so measure low and wide.
-    const idx = band(0.52, 0.88, 0);
+    // Deep A-pose (~60°) narrows span toward ~0.55H; allow down to 0.50H.
+    const idx = band(0.44, 0.88, 0);
     let mn = Infinity, mx = -Infinity;
     for (const i of idx) { if (VX[i] < mn) mn = VX[i]; if (VX[i] > mx) mx = VX[i]; }
     const span = mx - mn;
-    if (span < 0.60 * H || span > 1.30 * H) warnings.push('shoulder span is odd — arms may be misdetected');
+    if (span < 0.50 * H || span > 1.30 * H) warnings.push('shoulder span is odd — arms may be misdetected');
   }
   {
     let l = 0, r = 0;

@@ -200,6 +200,25 @@ function setPoseZero(humanoid) { humanoid.resetNormalizedPose(); }
   ok('A-pose: arm raise leaves head alone', headMove >= 0 && headMove < 0.02, 'moved ' + headMove.toFixed(4));
 }
 
+// ================= A-POSE sweep: 15°/30°/45°/60° droop =================
+for (const deg of [15, 45, 60]) {
+  const gltf = await roundTrip(buildCharacter(deg));
+  const rec = autoRigScene(gltf.scene);
+  ok(`A-pose ${deg}°: rigs without throwing`, !!rec.vrm);
+  ok(`A-pose ${deg}°: pose classified as A`, rec.autorig.pose === 'A', 'got ' + rec.autorig.pose);
+  ok(`A-pose ${deg}°: no warnings`, rec.autorig.warnings.length === 0, rec.autorig.warnings.join('; '));
+  const scene = rec.vrm.scene;
+  setPoseZero(rec.vrm.humanoid);
+  scene.updateMatrixWorld(true);
+  const armR = rec.vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+  armR.rotation.z = -1.2;
+  scene.updateMatrixWorld(true);
+  const handMove = meanDisplacement(scene, (v) => v.x < -0.40 && v.y < 1.35);
+  const headMove = meanDisplacement(scene, (v) => v.y > 1.42);
+  ok(`A-pose ${deg}°: arm raise moves hand verts`, handMove > 0.10, 'moved ' + handMove.toFixed(3));
+  ok(`A-pose ${deg}°: arm raise leaves head alone`, headMove >= 0 && headMove < 0.02, 'moved ' + headMove.toFixed(4));
+}
+
 // ================= already-rigged rejection =================
 {
   const g = buildCharacter(0);

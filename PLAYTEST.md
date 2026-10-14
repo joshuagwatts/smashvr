@@ -663,3 +663,14 @@ updates), PLAYTEST.md (this section).
 - **Damage-number overlap** — rapid multi-hits stack chips (they fade in
   0.5s); fine in real play, dense in the deterministic tests.
 - **CPU AI quality** — still unevaluated beyond not-suiciding (unchanged).
+
+## v0.5.1 A-pose hardening (2026-10-14)
+Joshua: "theres def gonna be a lot of a pose imports." Hardened the auto-rigger
+for deep A-poses: arm detection band extended down (catches hands to ~60° droop),
+pose classification widened (T < ~14°, A < ~67°), torso half-width estimator
+replaced with a vertical-continuity method (widest |x| structure present across
+7/8 vertical slices — max-extent, percentile, and density-peak all failed once
+arm intruders got numerous), plus a limb-shape elongation check so non-humanoid
+blobs still take the warning path instead of a false "A-pose" classification.
+Tests: 34/34 in test/autorig.mjs (T + A at 15°/30°/45°/60°, deformation checks,
+rigged-file rejection, blob warnings). 14/14 logic still green.
