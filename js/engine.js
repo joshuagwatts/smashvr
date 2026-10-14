@@ -6,7 +6,8 @@
 
 import * as THREE from 'three';
 import { createFighter } from './fighters.js';
-import { tickFighterVisual } from './anim.js';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js';
+import { STRIKE_LIMB } from './moves.js';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
@@ -961,9 +962,14 @@ function doLedgeGetup(game, f) {
 
 function stepLedgeAttack(game, f, foe) {
   const sf = f.stateFrame;
-  // hitbox in front, active ticks 8-14
+  // hitbox in front, active ticks 8-14 — v0.7: skeleton-driven from the
+  // getup-attack pose (same euler dict the locomotion system shows).
   if (sf >= 8 && sf <= 14 && hittable(foe)) {
-    const hx = f.x + 0.7 * f.facing, hy = f.y + 0.9;
+    f.root.position.set(f.x, f.y + hoverBob(f), 0);
+    f.root.scale.x = f.facing; f.root.scale.y = 1; f.root.scale.z = 1;
+    poseStrikeSkeleton(f, ledgeAttackEuler());
+    const tip = strikeTip(f, 'handR', { dx: 0.7 });
+    const hx = tip ? tip.x : f.x + 0.7 * f.facing, hy = tip ? tip.y : f.y + 0.9;
     if (rectsOverlap(hx, hy, 0.9, 0.7, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
       applyHit(game,
         { facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
@@ -1089,7 +1095,18 @@ function stepAttack(game, f, e, foe) {
     if (mf < h.from || mf > h.to) continue;
     if (foe.state === 'dead' || foe.state === 'respawn' || foe.invuln > 0) continue;
     if (f._hitSet.has(foe)) continue;
-    const hx = f.x + h.dx * f.facing, hy = f.y + h.dy;
+    // v0.7: skeleton-driven hitboxes — the striking limb's tip IS the hitbox.
+    // Sync the root transform to this tick's physics (syncRoot normally runs
+    // later, in the visual tick), pose the analytic attack pose (identical to
+    // what the visual shows — no blend during attacks), read the tip.
+    f.root.position.set(f.x, f.y + hoverBob(f), 0);
+    f.root.scale.x = f.facing; f.root.scale.y = 1; f.root.scale.z = 1;
+    poseStrikeSkeleton(f, attackPose(mv, mf));
+    const tip = strikeTip(f, STRIKE_LIMB[f.moveId], h);
+    // Bone unavailable (shouldn't happen on procedural rigs; VRM optionals):
+    // fall back to the design anchor.
+    const hx = tip ? tip.x : f.x + h.dx * f.facing;
+    const hy = tip ? tip.y : f.y + h.dy;
     if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
       f._hitSet.add(foe);
       applyHit(game, { facing: f.facing, theme: f.theme, kbClass: mv.kbClass, pow: f._chargeMult || 1 }, foe, h, hx, hy);

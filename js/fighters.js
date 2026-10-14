@@ -37,7 +37,16 @@ export function createFighter(defId) {
     secondary: savedTheme.secondary || def.theme.secondary,
   };
 
-  const rig = buildProceduralRig(theme, defId);
+  // v0.6: body type — Lab override ('smashvr_bodytype_<defId>': auto/biped/floater)
+  // wins; otherwise the def's native type. Drives hover locomotion + rig choice.
+  const btOverride = loadJSON('smashvr_bodytype_' + defId, 'auto');
+  const bodyType = (btOverride === 'biped' || btOverride === 'floater')
+    ? btOverride
+    : (def.bodyType || 'biped');
+
+  // v0.7: customs use the wisp (floater) rig as fallback when their bodyType
+  // is floater — the VRM hides it on attach anyway.
+  const rig = buildProceduralRig(theme, bodyType === 'floater' ? 'wisp' : defId);
   // v0.6.2: root is a wrapper — attachVRMToFighter hides rig.group only, so the
   // per-frame root visibility toggle (respawn blink in anim.js) can never
   // re-show the procedural rig on top of an attached VRM.
@@ -45,6 +54,9 @@ export function createFighter(defId) {
   root.add(rig.group);
 
   // Kit: native moveset overlaid with the saved lab kit.
+  // v0.7: custom roster defs have no MOVES entry of their own — their native
+  // kit is the kit def's moveset (default ronin, swappable in the Lab).
+  const nativeMoves = def.custom ? MOVES[def.kit] : MOVES[defId];
   const savedKit = loadJSON('smashvr_kit_' + defId) || {};
   const moves = {};
   for (const slot of SLOTS) {
@@ -52,16 +64,9 @@ export function createFighter(defId) {
     if (sv && sv.id) {
       moves[slot] = findMoveById(sv.id) || sv;
     } else {
-      moves[slot] = MOVES[defId][slot];
+      moves[slot] = nativeMoves[slot];
     }
   }
-
-  // v0.6: body type — Lab override ('smashvr_bodytype_<defId>': auto/biped/floater)
-  // wins; otherwise the def's native type. Drives hover locomotion + rig choice.
-  const btOverride = loadJSON('smashvr_bodytype_' + defId, 'auto');
-  const bodyType = (btOverride === 'biped' || btOverride === 'floater')
-    ? btOverride
-    : (def.bodyType || 'biped');
 
   return {
     defId,

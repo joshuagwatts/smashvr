@@ -772,3 +772,83 @@ VRM.
 - The rest-pose fix is verified against a mock; a real-VRM retest by Joshua
   is the ground truth.
 - Audio: still never actually heard. CPU AI quality: still unevaluated.
+
+## v0.6.2 hotfix — VRM attach "rig on top" bug (2026-10-14, commit fd41bbda)
+Joshua's report: imported Mushy.vrm — "its head was a little fucked up" / "like there was a fucked up rig on top."
+Root cause (verified against deployed v0.6 + his actual file): `createFighter` set `root: rig.group`
+(the SAME object). `attachVRMToFighter` hid `f.rig.group`, but `anim.js`'s respawn-blink line
+(`f.root.visible = ...`) runs EVERY frame and re-showed it — procedural rig rendered on top of the VRM.
+Fix: `createFighter` now wraps the rig in its own root `THREE.Group`; attach hides `rig.group` only,
+blink toggles the wrapper. Verified: Mushy in-game, `rigVisible:false`, VRM alone on screen, zero errors.
+Lesson: the auto-rig/VRM browser tests never attached a REAL .vrm through the real UI flow —
+the v0.5 agent tested the auto-rig path with a generated GLB, never the VRM path with rig hiding.
+
+
+## v0.7 animation combat overhaul — "frames of perfection" (2026-10-14)
+Joshua's directive after v0.4: "work on the animation sets and connect the move animation
+with the hitbox situation like legitimate combat gameplay... frames of perfection!"
+
+### The core change: hitboxes GENERATED from the live skeleton
+Old system: hitbox centers hand-placed per move (`h.dx/dy`), animation approximated them.
+New system (`js/engine.js` `stepAttack`, `js/anim.js` `poseStrikeSkeleton` + `strikeTip`):
+during active frames, each hitbox's center = the striking limb tip's world position, computed
+from the actual posed bones that tick (root synced to this tick's physics first; the analytic
+`attackPose` — identical to what the visual shows, no blend during attacks). The fist IS the
+hitbox. Damage/angles/KB/frame data untouched; `h.dx/dy` now documents the design anchor and
+serves as fallback if a bone is unavailable. `STRIKE_LIMB` (move → bone | `SPIN_FEET`) and
+`FLOATER_LIMB` (leg → chest) live in `js/moves.js`, shared by engine + tests.
+
+### Re-authored attacks: anticipation → strike → recovery
+All 32 tracks (16 ronin + 16 volt; wisp clones volt) rebuilt on the SAME frame data:
+coil key at `(startup-1)/total` (easeInOutSine wind-up from neutral), strike key EXACTLY at
+`hit.from/total` (easeOutExpo snap, 1-tick), hold through active, settle to neutral
+(easeOutCubic). Phase easing in `attackPose`; kill/strong punch-through moved to the strike
+span. No crossfade during `attack` state (visual ≡ hitbox pose by construction); blends resume
+on attack exit and all other transitions. Anchors nudged to honest tips (≤0.46u shifts;
+spin/sweep anchors = foot at strike tick). Locomotion: run stride bob, jump launch extension.
+
+### Floater kicks → body attacks (v0.6 honest gap, closed)
+Wisp kick-family (ftilt/fsmash/fair/bair/uair/dair/dtilt/dspecial) re-authored as whole-body
+slams/spins with new `WISP_*` poses; hitboxes generate from a new invisible `striker` bone at
+the body's leading edge (uair uses `head`). Wisp gets independent anchors (deep-cloned hits).
+Legless GLB imports map leg limbs → chest via `FLOATER_LIMB`.
+
+### Tests
+- `hitbox_sync`: 418 samples, 0 failures at 0.25u (was 383 @ 0.6u). Sweep attacks
+  (ronin_dsmash, wisp_bair, wisp_dtilt) verified at strike tick — the hitbox legitimately
+  sweeps during active.
+- `anim_phases` (new): jab/fsmash/dair — anticipation opposes strike vector, snap velocity >
+  coil/recovery, recovery returns. 9/9 PASS.
+- Full suite green: 14/14 logic, 19/19 playtest, 11/11 feel_v02, 40/40 feel_v03,
+  22/22 feel_v04, 27/27 color, 34/34 autorig, 20/20 bodytype, 8/8 vrm_rest,
+  angle_bands, kb_scaling, 18/18 rebalance.
+
+## v0.7 phase 2 — custom roster slots (2026-10-14)
+Joshua: "we need like a new slot for the vrm characters as we add them instead of
+attaching em to p1 ronin guy."
+
+### Design
+- `js/roster.js`: import → `custom_<sanitized>` def (`Mushy.vrm` → `MUSHY`), bodyType
+  auto-detected (autorig) or biped (VRM), kit defaults to RONIN. Blob + metadata in
+  IndexedDB (`smashvr`/`customFighters`); registry + select cards rebuild on boot.
+  Re-import updates the slot. `getCharacterData` lazy-loads from the blob.
+- Select: CUSTOM section under each side's cards (name, body-type tag, dashed swatch).
+  Customs skip mirror-match alt themes (VRM never tinted); port rings + HUD colors apply.
+- Fight start: each custom side's model attaches to its own fighter (`attachCustoms`);
+  Lab body-type override still wins. `destroyGame` removes VRMs from both sides.
+- Lab: customs get rename, kit swap (ronin/volt/wisp — clears move swaps), body-type
+  override (existing), delete (card + IDB + Lab state). Move-swap treats the kit's moves
+  as native; steals come from the kit's rival.
+- v0.6.2 wrapper kept: `createFighter` root is a `THREE.Group` wrapping `rig.group`.
+
+### Verification (node suites)
+All 14 suites green (see v0.7 above). Browser verification (import Mushy.vrm + 2nd file,
+custom-vs-custom, custom-vs-VOLT, wrapper holds, delete, reload persistence) pending —
+requires live browser; flagged for follow-up.
+
+### Honest gaps
+- Wisp anchors deviate from volt's kick positions (≤0.87u on uair) — honest to the body,
+  but a balance delta vs the v0.2-tuned kick placements. Worth a feel check.
+- Roster: no model preview in Lab (procedural rig shown); import is title-screen only;
+  custom-vs-custom mirror uses identical models (no alt).
+- Audio never heard headless; CPU AI quality unevaluated (standing gaps).

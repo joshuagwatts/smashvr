@@ -6,15 +6,23 @@
 
 import * as THREE from 'three';
 import { BONE_NAMES, VRM_BONE_MAP } from './rig.js';
-import { NEUTRAL_POSE, POSES } from './moves.js';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
+const _stw = new THREE.Vector3();
 
 const lerp = (a, b, u) => a + (b - a) * u;
 // v0.4: smoothstep easing for keyframe interpolation — poses accelerate out
 // of and settle into each key instead of snapping linearly between them.
 const sstep = (u) => u * u * (3 - 2 * u);
+// v0.7: phase-aware easing — the visual serves the frame data.
+// coil: slow deliberate wind-up into anticipation.
+// snap: explosive extension into the strike key (active-frame start).
+// settle: soft return through recovery.
+const easeInOutSine = (u) => -(Math.cos(Math.PI * u) - 1) / 2;
+const easeOutExpo = (u) => (u >= 1 ? 1 : 1 - Math.pow(2, -10 * u));
+const easeOutCubic = (u) => 1 - Math.pow(1 - u, 3);
 
 function basePose() {
   const out = {};
@@ -23,10 +31,14 @@ function basePose() {
 }
 
 // Interpolate a move's keyframe track at moveFrame/total.
-// Exported for the hitbox-sync test (test/hitbox_sync.mjs).
-// v0.4: eased (smoothstep) within each keyframe span instead of linear;
-// kill/strong moves get a punch-through exaggeration on the final span
-// (mid-span push past the linear path, landing exactly on the keyframes).
+// Exported for the hitbox-sync test (test/hitbox_sync.mjs) and the engine's
+// skeleton-driven hitboxes.
+// v0.7: phase-aware easing — the visual serves the frame data. The re-authored
+// tracks place a keyframe exactly at every hit.from/total (the strike key).
+// Spans ending at a strike key get an explosive snap; spans before startup
+// coil deliberately; spans after the active window settle softly. Kill/strong
+// moves keep the v0.4 punch-through exaggeration, now on the strike span
+// where it belongs (was: last span).
 export function attackPose(move, moveFrame) {
   const keys = move.anim;
   const t = move.total > 0 ? Math.min(1, Math.max(0, moveFrame / move.total)) : 1;
@@ -35,10 +47,21 @@ export function attackPose(move, moveFrame) {
   const k0 = keys[i], k1 = keys[i + 1];
   const span = (k1.t - k0.t) || 1;
   const u = Math.min(1, Math.max(0, (t - k0.t) / span));
-  let ue = sstep(u);
-  const lastSpan = (i === keys.length - 2);
-  if (lastSpan && (move.kbClass === 'kill' || move.kbClass === 'strong')) {
-    ue = ue + Math.sin(ue * Math.PI) * 0.09;
+  const startupT = move.startup / move.total;
+  const strikeTimes = move.hits.length
+    ? move.hits.map((h) => h.from / move.total)
+    : [startupT]; // hitless specials (projectiles) still snap at startup
+  const isStrike = strikeTimes.some((st) => Math.abs(k1.t - st) < 1e-9);
+  let ue;
+  if (isStrike) {
+    ue = easeOutExpo(u);
+    if (move.kbClass === 'kill' || move.kbClass === 'strong') {
+      ue = ue + Math.sin(Math.min(1, ue) * Math.PI) * 0.09;
+    }
+  } else if (k1.t < startupT - 1e-9) {
+    ue = easeInOutSine(u);
+  } else {
+    ue = easeOutCubic(u);
   }
   const out = {};
   for (const b of BONE_NAMES) {
@@ -133,13 +156,22 @@ function locomotionPoseBiped(f, t) {
       P.spine = [0, 0, -0.28];
       P.chest = [0, 0.1, -0.15];
       P.head = [0, 0, 0.15];
+      // v0.7: stride-synced vertical bob + slight forward pump — the old
+      // cycle floated without weight.
+      P.hips = [0, 0, -Math.abs(Math.sin(ph)) * 0.05];
       break;
     }
     case 'jump': {
-      P.upperLegR = [0, 0, 0.85]; P.lowerLegR = [0, 0, -1.8];
-      P.upperLegL = [0, 0, 0.7]; P.lowerLegL = [0, 0, -1.6];
-      P.upperArmR = [0, 0, 1.5]; P.upperArmL = [0, 0, -1.5];
-      P.spine = [0, 0, -0.2];
+      // v0.7: launch extension — explode up out of the squat over the first
+      // ticks, then tuck. Reads as a jump instead of a float.
+      const ext = Math.max(0, 1 - sf / 5);
+      P.upperLegR = [0, 0, 0.85 - ext * 1.0];
+      P.lowerLegR = [0, 0, -1.8 + ext * 1.9];
+      P.upperLegL = [0, 0, 0.7 - ext * 0.85];
+      P.lowerLegL = [0, 0, -1.6 + ext * 1.7];
+      P.upperArmR = [0, 0, 1.5 - ext * 0.6];
+      P.upperArmL = [0, 0, -1.5 + ext * 0.6];
+      P.spine = [0, 0, -0.2 + ext * 0.12];
       break;
     }
     case 'airdodge':
@@ -284,6 +316,16 @@ function locomotionPoseBiped(f, t) {
   return P;
 }
 
+function ensureVrmRest(f) {
+  const humanoid = f.vrm.vrm.humanoid;
+  if (f._vrmRest) return;
+  f._vrmRest = {};
+  for (const b of BONE_NAMES) {
+    const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+    f._vrmRest[b] = nd ? nd.quaternion.clone() : null;
+  }
+}
+
 export function applyPose(f, eulerDict) {
   if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
     const humanoid = f.vrm.vrm.humanoid;
@@ -296,13 +338,7 @@ export function applyPose(f, eulerDict) {
     // showed up as a constant twist, most visibly on the head. For
     // identity-rest rigs (procedural, auto-rigged) rest*delta === delta,
     // so their behavior is unchanged.
-    if (!f._vrmRest) {
-      f._vrmRest = {};
-      for (const b of BONE_NAMES) {
-        const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
-        f._vrmRest[b] = nd ? nd.quaternion.clone() : null;
-      }
-    }
+    ensureVrmRest(f);
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
       if (!e) continue;
@@ -319,6 +355,60 @@ export function applyPose(f, eulerDict) {
       f.rig.bones[b].rotation.set(e[0], e[1], e[2]);
     }
   }
+}
+
+// v0.7: skeleton-driven hitboxes. Pose the fighter's bones with an analytic
+// euler dict (no blending — the caller passes the exact pose the visual will
+// show) and update world matrices so strikeTip() can read live positions.
+// The engine calls this in stepAttack before the hit loop; the visual tick
+// re-applies the identical pose right after (idempotent).
+export function poseStrikeSkeleton(f, eulerDict) {
+  applyPose(f, eulerDict);
+  if (f.root) f.root.updateMatrixWorld(true);
+}
+
+function boneWorld(f, bone) {
+  if (f.rig && f.rig.bones[bone]) {
+    f.rig.bones[bone].getWorldPosition(_stw);
+    return { x: _stw.x, y: _stw.y };
+  }
+  if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
+    const node = f.vrm.vrm.humanoid.getNormalizedBoneNode(VRM_BONE_MAP[bone]);
+    if (!node) return null;
+    node.getWorldPosition(_stw);
+    return { x: _stw.x, y: _stw.y };
+  }
+  return null;
+}
+
+// v0.7: resolve which bone is the striking point for a hitbox.
+// Floaters (no legs) redirect leg limbs to the torso — their kick-family
+// moves are body attacks (v0.7 redesign). SPIN_FEET picks the currently
+// front-most foot for +x hitboxes, back-most for -x.
+export function resolveStrikeLimb(f, limbSpec) {
+  if (f.bodyType === 'floater') {
+    if (limbSpec === 'SPIN_FEET') return 'chest';
+    return FLOATER_LIMB[limbSpec] || limbSpec;
+  }
+  return limbSpec;
+}
+
+// v0.7: the fist IS the hitbox — world position of the striking limb's tip,
+// or null when the bone is unavailable (engine falls back to the design anchor).
+export function strikeTip(f, limbSpec, hit) {
+  let limb = resolveStrikeLimb(f, limbSpec);
+  if (limb === 'SPIN_FEET') {
+    const r = boneWorld(f, 'footR'), l = boneWorld(f, 'footL');
+    if (!r || !l) return null;
+    limb = (hit.dx >= 0) === (r.x >= l.x) ? 'footR' : 'footL';
+  }
+  return boneWorld(f, limb);
+}
+
+// v0.7: analytic euler dict for the ledge getup attack (same pose the
+// locomotion system shows), so its hitbox can be skeleton-driven too.
+export function ledgeAttackEuler() {
+  return Object.assign(basePose(), POSES.PUNCH_R);
 }
 
 function lerpPose(a, b, u) {
@@ -353,7 +443,12 @@ export function tickFighterVisual(f, dt) {
     f._blendT = 0;
     f._animKey = key;
   }
-  if (f._blendT < BLEND_TICKS) {
+  // v0.7: no crossfade DURING attacks. The re-authored anticipation keyframes
+  // start at neutral and ARE the transition; hitboxes are generated from this
+  // exact analytic pose, so visual and hitbox can never diverge mid-attack.
+  // (Attack exits and all other state changes still blend.)
+  const inAttack = f.state === 'attack' && f.moveId && f.moves[f.moveId];
+  if (!inAttack && f._blendT < BLEND_TICKS) {
     f._blendT++;
     pose = lerpPose(f._blendFrom, target, sstep(Math.min(1, f._blendT / BLEND_TICKS)));
   }

@@ -181,6 +181,10 @@ function buildWispRig(theme, suitMat, accentMat, darkMat) {
 
   const neck = at('neck', chest, 0, 0.20, 0);
   const head = at('head', neck, 0, 0.10, 0);
+  // v0.7: 'striker' — invisible bone at the body's leading edge (front
+  // surface). Wisp kick-family moves are body attacks; their hitboxes are
+  // generated from this point so the hit lands where the body visually is.
+  const striker = at('striker', chest, 0.42, 0.05, 0);
   // ghost eyes on the +X face (fighter faces +X)
   for (const s of [-1, 1]) {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 10), darkMat);

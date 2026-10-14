@@ -8,6 +8,7 @@ import { sfx } from './audio.js';
 import { createFighter } from './fighters.js';
 import { FIGHTER_DEFS } from './moves.js';
 import { loadVRMFile, attachVRMToFighter, removeVRMFromFighter } from './vrm.js';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData } from './roster.js';
 import { openLab } from './lab.js';
 import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js';
 
@@ -98,9 +99,9 @@ function showHud(v) {
 
 let mode = 'cpu';           // 'cpu' | 'versus'
 let selP1 = 'ronin', selP2 = 'volt';
-let pendingVRM = null;      // loaded VRM data, attached to P1 at fight start
 let game = null;
 let lastDefs = null;
+let rosterReady = null; // initRoster() promise — select waits for customs
 
 function defCard(defId, group) {
   // Build from the live fighter def so class + theme swatch always match.
@@ -110,14 +111,17 @@ function defCard(defId, group) {
   el.className = 'fcard' + (((group === 1 && defId === selP1) || (group === 2 && defId === selP2)) ? ' sel' : '');
   el.dataset.def = defId;
   el.dataset.group = group;
+  const def = FIGHTER_DEFS[defId];
   const cls = f ? f.cls.toUpperCase() : '?';
-  // v0.6: body type on the card so floaters are visible at select time
+  // v0.6: body type on the card so floaters are visible at select time.
+  // v0.7: custom slots show their name + CUSTOM tag.
   const bt = f ? (f.bodyType === 'floater' ? ' · FLOATER' : '') : '';
+  const customTag = def && def.custom ? ' · CUSTOM' : '';
   const c1 = f ? '#' + new THREE.Color(f.theme.primary).getHexString() : '#555';
   const c2 = f ? '#' + new THREE.Color(f.theme.secondary).getHexString() : '#777';
-  el.innerHTML = `<div class="fname">${defId.toUpperCase()}</div>
-    <div class="fclass">${cls}${bt}</div>
-    <div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})"></div>`;
+  el.innerHTML = `<div class="fname">${def && def.custom ? def.name : defId.toUpperCase()}</div>
+    <div class="fclass">${cls}${bt}${customTag}</div>
+    <div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})${def && def.custom ? ';border:1px dashed #9aa3b2' : ''}"></div>`;
   el.addEventListener('click', () => {
     sfx.uiMove();
     if (group === 1) selP1 = defId; else selP2 = defId;
@@ -129,10 +133,23 @@ function defCard(defId, group) {
 function refreshCards() {
   const g1 = $('p1-cards'), g2 = $('p2-cards');
   g1.innerHTML = ''; g2.innerHTML = '';
-  // v0.6: cards built from the live def list (ronin/volt/wisp/...)
+  // v0.7: built-ins first, then the CUSTOM section (imported characters).
+  const builtin = [], custom = [];
   for (const d of Object.keys(FIGHTER_DEFS)) {
+    (FIGHTER_DEFS[d].custom ? custom : builtin).push(d);
+  }
+  for (const d of builtin) {
     g1.appendChild(defCard(d, 1));
     g2.appendChild(defCard(d, 2));
+  }
+  if (custom.length) {
+    for (const [g, grp] of [[g1, 1], [g2, 2]]) {
+      const lab = document.createElement('div');
+      lab.className = 'fcard-label';
+      lab.textContent = '— CUSTOM —';
+      g.appendChild(lab);
+      for (const d of custom) g.appendChild(defCard(d, grp));
+    }
   }
 }
 
@@ -141,8 +158,11 @@ function openSelect(m) {
   $('select-title').textContent = m === 'cpu' ? '1P vs CPU — choose fighters' : '2P Versus — choose fighters';
   $('p1-mode-tag').textContent = m === 'cpu' ? '(you)' : '(P1)';
   $('p2-label').textContent = m === 'cpu' ? 'CPU' : 'P2';
-  refreshCards();
-  show('screen-select');
+  // v0.7: customs rebuild from IndexedDB before the cards render
+  rosterReady.finally(() => {
+    refreshCards();
+    show('screen-select');
+  });
 }
 
 // ------------------------------------------------------------ game lifecycle
@@ -182,25 +202,17 @@ function startFight(p1def, p2def, m, isDemo = false) {
     onPause: (paused) => { if (paused) show('screen-pause'); else show(null); },
     onHud: renderHud,
   });
-  if (pendingVRM) {
-    try {
-      attachVRMToFighter(game.fighters[0], pendingVRM);
-      // v0.6: imported body type drives hover locomotion — unless the Lab's
-      // manual override for this def says otherwise (override wins, no re-import).
-      const ov = readBodyTypeOverride(p1def);
-      if (pendingVRM.autorig && pendingVRM.autorig.bodyType && (!ov || ov === 'auto')) {
-        game.fighters[0].bodyType = pendingVRM.autorig.bodyType;
-      }
-      toast('VRM attached to P1');
-    } catch (err) { toast('VRM attach failed: ' + err.message, true); }
-  }
+  // v0.7: custom roster slots — each side's imported model attaches to its
+  // own fighter (replaces the old pendingVRM -> P1 flow).
+  attachCustoms(game, p1def, p2def);
   // v0.3 colors: mirror match (same def both sides) -> P2 gets the def's
   // altTheme via the same rig.setTheme path the base theme uses. VRM-driven
   // fighters keep their own look (f._isVRM check); one VRM side needs no alt.
+  // Customs never have altTheme (deleted at registration).
   if (p1def === p2def) {
     const def = FIGHTER_DEFS[p1def];
     const p2 = game.fighters[1];
-    if (def && def.altTheme && !game.fighters[0]._isVRM && !p2._isVRM &&
+    if (def && def.altTheme && !def.custom && !game.fighters[0]._isVRM && !p2._isVRM &&
         p2.rig && typeof p2.rig.setTheme === 'function') {
       p2.rig.setTheme(def.altTheme);
       p2.theme = { primary: def.altTheme.primary, secondary: def.altTheme.secondary };
@@ -216,9 +228,33 @@ function startFight(p1def, p2def, m, isDemo = false) {
   if (DEBUG) window.__sv = { game, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount } };
 }
 
+// v0.7: attach each custom side's imported model to its own fighter.
+// Async (model may load from IndexedDB on first use after a reload); the
+// fight runs on the procedural rig until the model lands.
+async function attachCustoms(g, p1def, p2def) {
+  const defs = [p1def, p2def];
+  for (let i = 0; i < 2; i++) {
+    if (!isCustom(defs[i])) continue;
+    try {
+      const data = await getCharacterData(defs[i]);
+      if (!g.fighters[i].root.parent) return; // fight was quit mid-load
+      attachVRMToFighter(g.fighters[i], data);
+      // imported body type drives hover locomotion — unless the Lab's manual
+      // override for this def says otherwise (override wins, no re-import).
+      const ov = readBodyTypeOverride(defs[i]);
+      if (data.autorig && data.autorig.bodyType && (!ov || ov === 'auto')) {
+        g.fighters[i].bodyType = data.autorig.bodyType;
+      }
+    } catch (err) {
+      toast(`Custom model failed (${defs[i]}): ` + err.message, true);
+    }
+  }
+}
+
 function destroyGame() {
   if (!game) return;
   try { removeVRMFromFighter(game.fighters[0]); } catch (e) {}
+  try { removeVRMFromFighter(game.fighters[1]); } catch (e) {}
   game.destroy();
   game = null;
   showHud(false);
@@ -252,7 +288,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ---- VRM import for P1 ----
+// ---- Custom roster import (v0.7: replaces the old pendingVRM -> P1 flow) ----
 function readBodyTypeOverride(defId) {
   try {
     const s = localStorage.getItem('smashvr_bodytype_' + defId);
@@ -265,24 +301,20 @@ $('vrm-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file) return;
   try {
-    pendingVRM = await loadVRMFile(file);
+    const { id, name, updated, bodyType } = await importCharacter(file);
     toast(
-      pendingVRM.autorig ? pendingVRM.autorig.notice : 'VRM loaded — attaches to P1 on fight start',
-      pendingVRM.autorig ? !pendingVRM.autorig.ok : false
+      `${name} ${updated ? 'updated' : 'added to roster'} — pick them on the select screen`,
+      false
     );
-    // v0.6: body-type badge under the import button
+    // body-type badge under the import button
     const st = $('import-status');
     if (st) {
-      if (pendingVRM.autorig && pendingVRM.autorig.bodyType) {
-        const bt = pendingVRM.autorig.bodyType;
-        st.textContent = `P1 avatar: ${bt === 'floater' ? 'Floater — hover locomotion' : 'Biped'} (auto-detected)`;
-      } else {
-        st.textContent = 'P1 avatar: VRM humanoid';
-      }
+      st.textContent = `${name}: ${bodyType === 'floater' ? 'Floater — hover locomotion' : 'Biped'} (auto-detected)`;
     }
+    refreshCards();
     sfx.select();
   } catch (err) {
-    toast('VRM load failed: ' + err.message, true);
+    toast('Import failed: ' + err.message, true);
   }
 });
 
@@ -303,11 +335,20 @@ $('btn-lab').addEventListener('click', () => {
 // cached preview fighter so the next open / fight re-reads the saved kit.
 new MutationObserver(() => {
   if ($('lab-overlay').classList.contains('hidden') || $('lab-overlay').childElementCount === 0) {
+    // v0.7: a custom slot may have been deleted — reset stale selections
+    if (!FIGHTER_DEFS[selP1]) selP1 = 'ronin';
+    if (!FIGHTER_DEFS[selP2]) selP2 = 'volt';
     if (labFighter) { labFighter = null; toast('Lab closed — P1 kit updated'); }
   }
 }).observe($('lab-overlay'), { childList: true, attributes: true, attributeFilter: ['class'] });
 
 // ------------------------------------------------------------ main loop
+
+// v0.7: custom roster restores from IndexedDB before anything needs it
+rosterReady = initRoster().catch((err) => {
+  console.warn('roster init failed:', err);
+  toast('Roster restore failed: ' + err.message, true);
+});
 
 show('screen-title');
 const clock = new THREE.Clock();

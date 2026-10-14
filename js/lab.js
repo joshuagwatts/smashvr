@@ -15,8 +15,15 @@ import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js';
 import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js';
 import { createFighter } from './fighters.js';
 import { tickFighterVisual, setFighterTheme } from './anim.js';
+import { renameCustom, setCustomKit, deleteCustom } from './roster.js';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
+// v0.7: customs steal from their kit's rival (their native kit is the kit def's)
+const otherFor = (d) => {
+  const dd = FIGHTER_DEFS[d];
+  const base = dd && dd.custom ? dd.kit : d;
+  return OTHER[base] || 'ronin';
+};
 
 function loadJSON(key, fallback) {
   try {
@@ -44,13 +51,22 @@ export function openLab(containerEl, onClose) {
   let theme = loadJSON('smashvr_theme_' + defId, null) || { ...FIGHTER_DEFS[defId].theme };
 
   const cls = () => FIGHTER_DEFS[defId].cls;
-  const nativeMoves = () => MOVES[defId];
+  // v0.7: customs use their kit's moveset as native
+  const nativeMoves = () => {
+    const dd = FIGHTER_DEFS[defId];
+    return dd.custom ? MOVES[dd.kit] : MOVES[defId];
+  };
   const curKit = () => {
     const k = {};
     for (const s of SLOTS) k[s] = (kit && kit[s]) || nativeMoves()[s];
     return k;
   };
-  const isNative = (move) => typeof move.id === 'string' && move.id.indexOf(defId + '_') === 0;
+  // v0.7: for customs, "native" = the kit's moves (e.g. ronin_jab)
+  const isNative = (move) => {
+    const dd = FIGHTER_DEFS[defId];
+    const prefix = (dd.custom ? dd.kit : defId) + '_';
+    return typeof move.id === 'string' && move.id.indexOf(prefix) === 0;
+  };
   const stolenSet = () => {
     const o = {};
     const k = curKit();
@@ -61,7 +77,7 @@ export function openLab(containerEl, onClose) {
     const k = curKit();
     for (const s of SLOTS) if (k[s].id === id) return k[s].name;
     for (const s of SLOTS) {
-      const m = MOVES[OTHER[defId]][s];
+      const m = MOVES[otherFor(defId)][s];
       if (m.id === id) return m.name;
     }
     return id;
@@ -119,6 +135,79 @@ export function openLab(containerEl, onClose) {
     defBtns[d] = b;
   }
   leftCol.appendChild(defRow);
+
+  // v0.7: custom slot management — rename, kit swap, delete. Visible only
+  // when a custom def is selected.
+  const customRow = el('div');
+  css(customRow, { display: 'none', gap: '8px', marginBottom: '10px', alignItems: 'center', flexWrap: 'wrap' });
+  const nameInput = document.createElement('input');
+  css(nameInput, { padding: '6px 8px', borderRadius: '6px', background: '#232838', color: '#e8ecf4', border: '1px solid #3a4157', fontSize: '12px', width: '130px' });
+  nameInput.placeholder = 'Rename…';
+  const renameBtn = el('button', 'Rename');
+  css(renameBtn, { padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3a4157', background: '#232838', color: '#e8ecf4', fontSize: '12px' });
+  renameBtn.onclick = async () => {
+    if (!FIGHTER_DEFS[defId].custom) return;
+    await renameCustom(defId, nameInput.value);
+    nameInput.value = '';
+    refreshDefBtns();
+    renderAll();
+    say(`Renamed to ${FIGHTER_DEFS[defId].name}.`, true);
+  };
+  const kitSel = document.createElement('select');
+  css(kitSel, { padding: '6px 8px', borderRadius: '6px', background: '#232838', color: '#e8ecf4', border: '1px solid #3a4157', fontSize: '12px' });
+  for (const k of ['ronin', 'volt', 'wisp']) {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = FIGHTER_DEFS[k].name + ' kit';
+    kitSel.appendChild(o);
+  }
+  kitSel.onchange = async () => {
+    if (!FIGHTER_DEFS[defId].custom) return;
+    await setCustomKit(defId, kitSel.value);
+    kit = null; // clear move swaps — they belonged to the old kit
+    try { localStorage.removeItem('smashvr_kit_' + defId); } catch (e) {}
+    rebuildPreview();
+    renderAll();
+    say(`Moveset swapped to ${FIGHTER_DEFS[kitSel.value].name} kit.`, true);
+  };
+  const delBtn = el('button', 'Delete slot');
+  css(delBtn, { padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #7a2e2e', background: '#3d1f1f', color: '#ff9a9a', fontSize: '12px' });
+  delBtn.onclick = async () => {
+    if (!FIGHTER_DEFS[defId].custom) return;
+    const nm = FIGHTER_DEFS[defId].name;
+    if (!window.confirm(`Delete ${nm} from the roster?`)) return;
+    await deleteCustom(defId);
+    say(`${nm} deleted.`, true);
+    teardown(); if (onClose) onClose();
+  };
+  customRow.appendChild(el('span', 'Custom:'));
+  customRow.appendChild(nameInput);
+  customRow.appendChild(renameBtn);
+  customRow.appendChild(kitSel);
+  customRow.appendChild(delBtn);
+  leftCol.appendChild(customRow);
+
+  function refreshDefBtns() {
+    for (const d of Object.keys(defBtns)) {
+      if (FIGHTER_DEFS[d]) defBtns[d].textContent = FIGHTER_DEFS[d].name;
+      else { defBtns[d].remove(); delete defBtns[d]; }
+    }
+    // customs added after Lab opened
+    for (const d of Object.keys(FIGHTER_DEFS)) {
+      if (!defBtns[d]) {
+        const b = el('button', FIGHTER_DEFS[d].name);
+        css(b, { flex: '1', padding: '8px', borderRadius: '8px', cursor: 'pointer', border: '1px solid #3a4157', background: '#232838', color: '#e8ecf4', fontWeight: '700', letterSpacing: '1px' });
+        b.onclick = () => switchDef(d);
+        defRow.appendChild(b);
+        defBtns[d] = b;
+      }
+    }
+  }
+
+  function renderCustomRow() {
+    const isC = !!(FIGHTER_DEFS[defId] && FIGHTER_DEFS[defId].custom);
+    customRow.style.display = isC ? 'flex' : 'none';
+    if (isC) kitSel.value = FIGHTER_DEFS[defId].kit;
+  }
 
   const classLine = el('div');
   css(classLine, { fontSize: '12px', color: '#9aa3b8', marginBottom: '10px' });
@@ -319,6 +408,7 @@ export function openLab(containerEl, onClose) {
 
   function renderAll() {
     renderBudget();
+    renderCustomRow();
     rowsWrap.innerHTML = '';
     const k = curKit();
     for (const s of SLOTS) {
@@ -327,7 +417,7 @@ export function openLab(containerEl, onClose) {
       css(row, { display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 4px', borderBottom: '1px solid #1e2230', fontSize: '13px' });
       const lab = el('span', SLOT_LABELS[s]);
       css(lab, { width: '110px', color: '#9aa3b8', flexShrink: '0' });
-      const nm = el('span', m.name + (isNative(m) ? '' : ` (${FIGHTER_DEFS[OTHER[defId]].name})`));
+      const nm = el('span', m.name + (isNative(m) ? '' : ` (${FIGHTER_DEFS[otherFor(defId)].name})`));
       css(nm, { flex: '1', fontWeight: isNative(m) ? '400' : '700', color: isNative(m) ? '#e8ecf4' : '#7df9ff' });
       const cost = el('span', fmt(m.cost) + ' pts');
       css(cost, { width: '64px', textAlign: 'right', color: '#9aa3b8' });
@@ -365,8 +455,8 @@ export function openLab(containerEl, onClose) {
     // native option first (the "drop" path)
     addOpt(nativeMoves()[slot], '(native)');
     const grp = document.createElement('optgroup');
-    grp.label = FIGHTER_DEFS[OTHER[defId]].name + ' moves';
-    for (const s of SLOTS) grp.appendChild(addOpt(MOVES[OTHER[defId]][s], ''));
+    grp.label = FIGHTER_DEFS[otherFor(defId)].name + ' moves';
+    for (const s of SLOTS) grp.appendChild(addOpt(MOVES[otherFor(defId)][s], ''));
     sel.appendChild(grp);
     row.appendChild(sel);
 
@@ -412,7 +502,7 @@ export function openLab(containerEl, onClose) {
   function findMoveOption(id) {
     for (const s of SLOTS) {
       if (MOVES[defId][s].id === id) return MOVES[defId][s];
-      if (MOVES[OTHER[defId]][s].id === id) return MOVES[OTHER[defId]][s];
+      if (MOVES[otherFor(defId)][s].id === id) return MOVES[otherFor(defId)][s];
     }
     return null;
   }

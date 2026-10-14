@@ -60,6 +60,41 @@ const KIND = {
   nspecial: 'special', sspecial: 'special', uspecial: 'special', dspecial: 'special',
 };
 
+// v0.7: striking limb per move — the bone whose tip IS the hitbox.
+// 'SPIN_FEET' = spin moves: per active tick, the front-most foot matches the
+// +x hitbox and the back-most matches the -x hitbox (feet trade sides mid-spin).
+export const STRIKE_LIMB = {
+  ronin_jab: 'handR', ronin_ftilt: 'footR', ronin_utilt: 'handR',
+  ronin_dtilt: 'footR', ronin_fsmash: 'handR', ronin_usmash: 'handR',
+  ronin_dsmash: 'SPIN_FEET', ronin_nair: 'chest',
+  ronin_fair: 'handR', ronin_bair: 'lowerArmR', ronin_uair: 'handR',
+  ronin_dair: 'footR', ronin_sspecial: 'chest', ronin_uspecial: 'handR',
+  ronin_dspecial: 'chest', ronin_nspecial: 'handR',
+  volt_jab: 'handR', volt_ftilt: 'upperArmR', volt_utilt: 'handR',
+  volt_dtilt: 'footR', volt_fsmash: 'footR', volt_usmash: 'handR',
+  volt_dsmash: 'handR', volt_nair: 'chest',
+  volt_fair: 'lowerLegR', volt_bair: 'footR', volt_uair: 'footR',
+  volt_dair: 'footR', volt_nspecial: 'handR', volt_sspecial: 'chest',
+  volt_uspecial: 'handR', volt_dspecial: 'footR',
+};
+for (const s of SLOTS) STRIKE_LIMB['wisp_' + s] = STRIKE_LIMB['volt_' + s];
+// v0.7: wisp kick-family moves are body attacks — hitboxes come from the
+// 'striker' bone (body's leading edge), not phantom legs. uair strikes with
+// the head (body stretched skyward).
+for (const s of ['ftilt', 'fsmash', 'fair', 'bair', 'dair', 'dtilt', 'dspecial']) {
+  STRIKE_LIMB['wisp_' + s] = 'striker';
+}
+STRIKE_LIMB['wisp_uair'] = 'head';
+
+// v0.7: floaters have no legs — their kick-family moves are body attacks.
+// Leg limbs redirect to the torso for hitbox generation (and the wisp anim
+// tracks are authored as body motions to match).
+export const FLOATER_LIMB = {
+  footR: 'chest', footL: 'chest',
+  lowerLegR: 'chest', lowerLegL: 'chest',
+  upperLegR: 'chest', upperLegL: 'chest',
+};
+
 // ---------------------------------------------------------------------------
 // Pose library. Eulers are [rx, ry, rz] radians on the logical bones.
 // Fighter faces +X, Y-up. Sparse dicts merged over NEUTRAL_POSE by K().
@@ -84,6 +119,38 @@ export const POSES = {
     hips: [0, -0.15, 0], upperLegR: [0, 0, 0.35], upperLegL: [0, 0, -0.3],
   },
   WINDUP_KICK_R: { upperLegR: [0, 0, -0.7], lowerLegR: [0, 0, 1.5], spine: [0, 0, -0.08], upperArmR: [0, 0, -0.5] },
+  // ---- v0.7: wisp body-attack poses (floaters have no legs; kick-family
+  // moves become whole-body slams/spins. Hitboxes generate from the
+  // 'striker' bone at the body's leading edge.) ----
+  WISP_COIL: { // twist back, compress — anticipation
+    hips: [0, 0.7, 0.08], spine: [0, 0, 0.35], chest: [0, 0, 0.3], head: [0, 0, 0.25],
+    upperArmR: [0, 0, 1.8], lowerArmR: [0, 0, 0.6],
+    upperArmL: [0, 0, -1.8], lowerArmL: [0, 0, -0.6],
+  },
+  WISP_SLAM: { // twist into the slam, leading edge extends (S3 probe: best reach)
+    hips: [0, 0.4, -0.1], spine: [0, 0, -0.2], chest: [0, 0, -0.15], head: [0, 0, -0.1],
+    upperArmR: [0, 0, 2.0], lowerArmR: [0, 0, 0.3],
+    upperArmL: [0, 0, -2.0], lowerArmL: [0, 0, -0.3],
+  },
+  WISP_SPIN: { // horizontal body spin (hips yaw overridden per keyframe)
+    hips: [0, 1.4, 0], spine: [0, 0, -0.25], chest: [0, 0, -0.2], head: [0, 0, -0.15],
+    upperArmR: [0, 0, 2.6], lowerArmR: [0, 0, 0.2],
+    upperArmL: [0, 0, -2.6], lowerArmL: [0, 0, -0.2],
+  },
+  WISP_UP: { // body upright, stretched skyward — the head is the strike
+    hips: [0, 0, 0], spine: [0, 0, 0.05], chest: [0, 0, 0.05], head: [0, 0, 0.05],
+    upperArmR: [0, 0, 2.6], lowerArmR: [0, 0, 0.2],
+    upperArmL: [0, 0, -2.6], lowerArmL: [0, 0, -0.2],
+  },
+  WISP_LOWSPIN: { // pitched-down body spin for the low sweep (yaw overridden)
+    hips: [0, 1.0, -0.18], spine: [0, 0, -0.45], chest: [0, 0, -0.35], head: [0, 0, -0.25],
+    upperArmR: [0, 0, 2.4], lowerArmR: [0, 0, 0.2],
+    upperArmL: [0, 0, -2.4], lowerArmL: [0, 0, -0.2],
+  },
+  WISP_DOWN: { // pitch down, body slams earthward
+    hips: [0, 0, -0.15], spine: [0, 0, -0.6], chest: [0, 0, -0.5], head: [0, 0, -0.4],
+    upperArmR: [0, 0, 2.4], upperArmL: [0, 0, -2.4],
+  },
   KICK_R: {
     upperLegR: [0, 0, 1.5], lowerLegR: [0, 0, -0.15], footR: [0, 0, 0.5],
     spine: [0, 0, 0.28], chest: [0, 0, 0.2], upperArmR: [0, 0, -0.7],
@@ -124,9 +191,10 @@ export const POSES = {
     upperArmL: [0, 0, -0.8], lowerArmL: [0, 0, -1.1], head: [0, 0, 0.28],
   },
   SWEEP: {
-    spine: [0, 0, -0.55], upperLegR: [0, 0, 1.4], lowerLegR: [0, 0, -0.12],
-    footR: [0, 0, 0.55], upperLegL: [0, 0, 0.9], lowerLegL: [0, 0, -1.55],
-    upperArmR: [0, 0, 0.9], head: [0, 0, 0.25],
+    upperLegR: [0, 0, 1.1], lowerLegR: [0, 0, -0.5], footR: [0, 0, 0.3],
+    upperLegL: [0, 0, 0.15], lowerLegL: [0, 0, -0.5],
+    spine: [0, 0, -0.15], chest: [0, 0.1, -0.08], hips: [0, 0, -0.06],
+    upperArmR: [0, 0, 0.5], upperArmL: [0, 0, -0.9],
   },
   SPIN_A: {
     upperArmR: [0, 0, 1.57], lowerArmR: [0, 0, 0.1],
@@ -286,63 +354,64 @@ const ronin = {
   jab: mv('ronin', 'jab', {
     name: 'Jab Combo', startup: 3, active: 4, total: 22, kbClass: 'weak', lunge: [0.06, 0],
     hits: [
-      H(0.55, 1.05, 0.7, 0.5, 2, 30, 20, 40, 3, 5),
-      H(0.6, 1.05, 0.7, 0.5, 3, 40, 28, 60, 11, 13),
+      H(0.85, 1.25, 0.7, 0.5, 2, 30, 20, 40, 3, 5),
+      H(0.85, 1.25, 0.7, 0.5, 3, 40, 28, 60, 11, 13),
     ],
-    anim: [K(0, 'NEUTRAL'), K(3 / 22, 'WINDUP_SHORT'), K(6 / 22, 'JAB_R'), K(11 / 22, 'WINDUP_SHORT'), K(14 / 22, 'JAB_R'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    // v0.7: 1-2 rhythm — coil, snap, hold, pull back, snap, hold, settle.
+    anim: [K(0, 'NEUTRAL'), K(2 / 22, 'WINDUP_SHORT'), K(3 / 22, 'JAB_R'), K(6 / 22, 'JAB_R'), K(10 / 22, 'WINDUP_SHORT'), K(11 / 22, 'JAB_R'), K(14 / 22, 'JAB_R'), K(1, 'NEUTRAL')],
   }),
   ftilt: mv('ronin', 'ftilt', {
     name: 'Side Kick', startup: 6, active: 4, total: 30, kbClass: 'neutral', lunge: [0.10, 0],
-    hits: [H(0.7, 0.6, 0.9, 0.7, 13, 35, 35, 90, 6, 10)],
-    anim: [K(0, 'NEUTRAL'), K(5 / 30, 'WINDUP_KICK_R'), K(8 / 30, 'KICK_R'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0.95, 0.9, 0.9, 0.7, 13, 35, 35, 90, 6, 10)],
+    anim: [K(0, 'NEUTRAL'), K(5 / 30, 'WINDUP_KICK_R'), K(6 / 30, 'KICK_R'), K(10 / 30, 'KICK_R'), K(1, 'NEUTRAL')],
   }),
   utilt: mv('ronin', 'utilt', {
     name: 'Rising Palm', startup: 5, active: 6, total: 28, kbClass: 'neutral',
-    hits: [H(0.65, 1.45, 0.8, 0.8, 10, 88, 30, 100, 5, 11)],
-    anim: [K(0, 'NEUTRAL'), K(4 / 28, 'CROUCH'), K(7 / 28, 'PALM'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0.7, 1.7, 0.8, 0.8, 10, 88, 30, 100, 5, 11)],
+    anim: [K(0, 'NEUTRAL'), K(4 / 28, 'CROUCH'), K(5 / 28, 'PALM'), K(11 / 28, 'PALM'), K(1, 'NEUTRAL')],
   }),
   dtilt: mv('ronin', 'dtilt', {
     name: 'Low Sweep', startup: 7, active: 4, total: 30, kbClass: 'neutral',
     hits: [H(0.7, 0.35, 0.9, 0.45, 12, 25, 32, 85, 7, 11)],
-    anim: [K(0, 'NEUTRAL'), K(5 / 30, 'CROUCH'), K(9 / 30, 'SWEEP'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(6 / 30, 'CROUCH'), K(7 / 30, 'SWEEP'), K(11 / 30, 'SWEEP'), K(1, 'NEUTRAL')],
   }),
   fsmash: mv('ronin', 'fsmash', {
     name: 'Blade Rush', startup: 12, active: 4, total: 48, kbClass: 'strong', lunge: [0.22, 0],
     hits: [H(0.85, 1.05, 0.9, 0.6, 18, 35, 45, 110, 12, 16)],
-    anim: [K(0, 'NEUTRAL'), K(8 / 48, 'WINDUP_R'), K(14 / 48, 'PUNCH_R'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(11 / 48, 'WINDUP_R'), K(12 / 48, 'PUNCH_R'), K(16 / 48, 'PUNCH_R'), K(1, 'NEUTRAL')],
   }),
   usmash: mv('ronin', 'usmash', {
     name: 'Skyward Fist', startup: 9, active: 8, total: 52, kbClass: 'kill',
     hits: [H(0.85, 1.25, 0.8, 0.8, 19, 88, 50, 120, 9, 17)],
-    anim: [K(0, 'NEUTRAL'), K(6 / 52, 'CROUCH'), K(12 / 52, 'UPPERCUT'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(8 / 52, 'CROUCH'), K(9 / 52, 'UPPERCUT'), K(17 / 52, 'UPPERCUT'), K(1, 'NEUTRAL')],
   }),
   dsmash: mv('ronin', 'dsmash', {
     name: 'Whirlwind Kick', startup: 10, active: 8, total: 50, kbClass: 'strong',
     hits: [
-      H(0.35, 0.55, 0.9, 0.7, 17, 30, 45, 105, 10, 14),
-      H(-0.65, 0.55, 0.9, 0.7, 17, 150, 45, 105, 14, 18),
+      H(0.05, 0.55, 0.9, 0.7, 17, 30, 45, 105, 10, 14),
+      H(-0.85, 0.55, 0.9, 0.7, 17, 150, 45, 105, 14, 18),
     ],
-    anim: [K(0, 'NEUTRAL'), K(8 / 50, 'CROUCH'), K(12 / 50, 'SPIN_A', { hips: [0, 1.5, 0] }), K(16 / 50, 'SPIN_A', { hips: [0, 3.1, 0] }), K(20 / 50, 'SPIN_A', { hips: [0, 4.7, 0] }), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(9 / 50, 'CROUCH'), K(10 / 50, 'SPIN_A', { hips: [0, 1.5, 0] }), K(14 / 50, 'SPIN_A', { hips: [0, 3.1, 0] }), K(18 / 50, 'SPIN_A', { hips: [0, 4.7, 0] }), K(1, 'NEUTRAL')],
   }),
   nair: mv('ronin', 'nair', {
     name: 'Cyclone Elbow', startup: 3, active: 20, total: 40, kbClass: 'neutral',
     hits: [H(0, 1.1, 1.2, 0.8, 13, 40, 32, 90, 3, 23)],
-    anim: [K(0, 'NEUTRAL'), K(3 / 40, 'SPIN_A', { hips: [0, 0.8, 0] }), K(12 / 40, 'SPIN_A', { hips: [0, 2.8, 0] }), K(22 / 40, 'SPIN_A', { hips: [0, 5.0, 0] }), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(2 / 40, 'SPIN_A', { hips: [0, 0.2, 0] }), K(3 / 40, 'SPIN_A', { hips: [0, 0.8, 0] }), K(13 / 40, 'SPIN_A', { hips: [0, 2.8, 0] }), K(23 / 40, 'SPIN_A', { hips: [0, 4.8, 0] }), K(1, 'NEUTRAL')],
   }),
   fair: mv('ronin', 'fair', {
     name: 'Comet Fist', startup: 14, active: 6, total: 44, kbClass: 'strong', lunge: [0.08, 0],
     hits: [H(0.8, 1.15, 0.75, 0.6, 15, 20, 40, 100, 14, 20)],
-    anim: [K(0, 'NEUTRAL'), K(10 / 44, 'WINDUP_R'), K(16 / 44, 'PUNCH_R'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(13 / 44, 'WINDUP_R'), K(14 / 44, 'PUNCH_R'), K(20 / 44, 'PUNCH_R'), K(1, 'NEUTRAL')],
   }),
   bair: mv('ronin', 'bair', {
     name: 'Back Kick', startup: 11, active: 6, total: 42, kbClass: 'strong',
     hits: [H(-0.15, 1.45, 0.8, 0.7, 15, 145, 40, 100, 11, 17)],
-    anim: [K(0, 'NEUTRAL'), K(8 / 42, 'WINDUP_R'), K(13 / 42, 'ELBOW_BACK'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(10 / 42, 'WINDUP_R'), K(11 / 42, 'ELBOW_BACK'), K(17 / 42, 'ELBOW_BACK'), K(1, 'NEUTRAL')],
   }),
   uair: mv('ronin', 'uair', {
     name: 'Helm Splitter', startup: 2, active: 10, total: 34, kbClass: 'neutral',
-    hits: [H(0.72, 1.35, 0.7, 1.0, 11, 85, 30, 95, 2, 12)],
-    anim: [K(0, 'NEUTRAL'), K(2 / 34, 'CROUCH'), K(6 / 34, 'OVERHEAD'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0.6, 1.8, 0.7, 1.0, 11, 85, 30, 95, 2, 12)],
+    anim: [K(0, 'NEUTRAL'), K(1 / 34, 'CROUCH'), K(2 / 34, 'OVERHEAD'), K(12 / 34, 'OVERHEAD'), K(1, 'NEUTRAL')],
   }),
   dair: mv('ronin', 'dair', {
     name: 'Drill Stomp', startup: 16, active: 12, total: 48, kbClass: 'neutral',
@@ -351,37 +420,38 @@ const ronin = {
       H(0.3, 0.25, 0.8, 0.6, 4, 270, 15, 40, 20, 24),
       H(0.3, 0.25, 0.8, 0.6, 4, 60, 25, 60, 24, 28),
     ],
-    anim: [K(0, 'NEUTRAL'), K(12 / 48, 'CROUCH'), K(18 / 48, 'STOMP'), K(30 / 48, 'STOMP'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(15 / 48, 'CROUCH'), K(16 / 48, 'STOMP'), K(20 / 48, 'STOMP'), K(24 / 48, 'STOMP'), K(28 / 48, 'STOMP'), K(1, 'NEUTRAL')],
   }),
   nspecial: mv('ronin', 'nspecial', {
     name: 'Ember Shot', startup: 10, active: 2, total: 36, kbClass: 'weak', special: 'fireball',
     hits: [],
     projectile: { speed: 9, dmg: 7, angle: 30, baseKB: 25, kbGrowth: 60, w: 0.5, h: 0.5, life: 120, gravity: 0.25 },
-    anim: [K(0, 'NEUTRAL'), K(8 / 36, 'WINDUP_SHORT'), K(12 / 36, 'FIREBALL'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(9 / 36, 'WINDUP_SHORT'), K(10 / 36, 'FIREBALL'), K(12 / 36, 'FIREBALL'), K(1, 'NEUTRAL')],
   }),
   sspecial: mv('ronin', 'sspecial', {
     name: 'Cyclone Spin', startup: 10, active: 14, total: 44, kbClass: 'neutral', special: 'spin', lunge: [0, 0.03],
-    hits: [H(0, 1.0, 1.4, 1.2, 12, 45, 40, 95, 10, 24)],
-    anim: [K(0, 'NEUTRAL'), K(8 / 44, 'CROUCH'), K(14 / 44, 'TORNADO_A', { hips: [0, 1.5, 0] }), K(22 / 44, 'TORNADO_A', { hips: [0, 3.5, 0] }), K(30 / 44, 'TORNADO_A', { hips: [0, 5.5, 0] }), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0, 1.25, 1.4, 1.2, 12, 45, 40, 95, 10, 24)],
+    anim: [K(0, 'NEUTRAL'), K(9 / 44, 'CROUCH'), K(10 / 44, 'TORNADO_A', { hips: [0, 1.5, 0] }), K(17 / 44, 'TORNADO_A', { hips: [0, 3.5, 0] }), K(24 / 44, 'TORNADO_A', { hips: [0, 5.5, 0] }), K(1, 'NEUTRAL')],
   }),
   uspecial: mv('ronin', 'uspecial', {
     name: 'Rising Punch', startup: 4, active: 10, total: 50, kbClass: 'strong', special: 'rise', lunge: [0, 0],
     hits: [
-      H(0.7, 1.1, 0.7, 0.7, 5, 80, 40, 80, 4, 7),
+      H(0.9, 1.4, 0.7, 0.7, 5, 80, 40, 80, 4, 7),
       H(0.85, 1.35, 0.7, 0.7, 9, 80, 45, 100, 7, 14),
     ],
-    anim: [K(0, 'NEUTRAL'), K(3 / 50, 'CROUCH'), K(8 / 50, 'RISE_B'), K(16 / 50, 'RISE_B'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(3 / 50, 'CROUCH'), K(4 / 50, 'RISE_B'), K(7 / 50, 'RISE_B'), K(14 / 50, 'RISE_B'), K(1, 'NEUTRAL')],
   }),
   dspecial: mv('ronin', 'dspecial', {
     name: 'Tornado', startup: 1, active: 20, total: 44, kbClass: 'weak', special: 'tornado',
     hits: [
-      H(0, 1.0, 1.3, 1.3, 3, 75, 12, 30, 1, 5),
-      H(0, 1.0, 1.3, 1.3, 3, 75, 12, 30, 5, 9),
-      H(0, 1.0, 1.3, 1.3, 3, 75, 12, 30, 9, 13),
-      H(0, 1.0, 1.3, 1.3, 3, 75, 12, 30, 13, 17),
-      H(0, 1.0, 1.3, 1.3, 3, 75, 12, 30, 17, 21),
+      H(0, 1.25, 1.3, 1.3, 3, 75, 12, 30, 1, 5),
+      H(0, 1.25, 1.3, 1.3, 3, 75, 12, 30, 5, 9),
+      H(0, 1.25, 1.3, 1.3, 3, 75, 12, 30, 9, 13),
+      H(0, 1.25, 1.3, 1.3, 3, 75, 12, 30, 13, 17),
+      H(0, 1.25, 1.3, 1.3, 3, 75, 12, 30, 17, 21),
     ],
-    anim: [K(0, 'NEUTRAL'), K(2 / 44, 'TORNADO_A', { hips: [0, 1, 0] }), K(10 / 44, 'TORNADO_A', { hips: [0, 3, 0] }), K(18 / 44, 'TORNADO_A', { hips: [0, 5, 0] }), K(26 / 44, 'TORNADO_A', { hips: [0, 7, 0] }), K(0.9, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    // v0.7: startup 1 — no room for a coil key; opens straight into the spin.
+    anim: [K(0, 'NEUTRAL'), K(1 / 44, 'TORNADO_A', { hips: [0, 1, 0] }), K(11 / 44, 'TORNADO_A', { hips: [0, 3, 0] }), K(21 / 44, 'TORNADO_A', { hips: [0, 5, 0] }), K(1, 'NEUTRAL')],
   }),
 };
 
@@ -393,35 +463,35 @@ const volt = {
   jab: mv('volt', 'jab', {
     name: 'Volt Jab', startup: 4, active: 4, total: 24, kbClass: 'weak',
     hits: [
-      H(0.55, 1.05, 0.7, 0.5, 3, 30, 20, 40, 4, 6),
-      H(0.6, 1.05, 0.7, 0.5, 4, 40, 28, 60, 12, 14),
+      H(0.8, 1.25, 0.7, 0.5, 3, 30, 20, 40, 4, 6),
+      H(0.8, 1.25, 0.7, 0.5, 4, 40, 28, 60, 12, 14),
     ],
-    anim: [K(0, 'NEUTRAL'), K(4 / 24, 'WINDUP_SHORT'), K(7 / 24, 'JAB_R'), K(12 / 24, 'WINDUP_SHORT'), K(15 / 24, 'JAB_R'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(3 / 24, 'WINDUP_SHORT'), K(4 / 24, 'JAB_R'), K(7 / 24, 'JAB_R'), K(11 / 24, 'WINDUP_SHORT'), K(12 / 24, 'JAB_R'), K(15 / 24, 'JAB_R'), K(1, 'NEUTRAL')],
   }),
   ftilt: mv('volt', 'ftilt', {
     name: 'Shoulder Check', startup: 8, active: 4, total: 32, kbClass: 'neutral',
     hits: [H(0.35, 1.3, 0.9, 0.7, 14, 35, 38, 95, 8, 12)],
-    anim: [K(0, 'NEUTRAL'), K(6 / 32, 'WINDUP_R'), K(10 / 32, 'SHOULDER'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(7 / 32, 'WINDUP_R'), K(8 / 32, 'SHOULDER'), K(12 / 32, 'SHOULDER'), K(1, 'NEUTRAL')],
   }),
   utilt: mv('volt', 'utilt', {
     name: 'Uppercut', startup: 7, active: 5, total: 30, kbClass: 'neutral',
     hits: [H(0.8, 1.3, 0.8, 0.8, 11, 80, 34, 95, 7, 12)],
-    anim: [K(0, 'NEUTRAL'), K(5 / 30, 'CROUCH'), K(9 / 30, 'UPPERCUT'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(6 / 30, 'CROUCH'), K(7 / 30, 'UPPERCUT'), K(12 / 30, 'UPPERCUT'), K(1, 'NEUTRAL')],
   }),
   dtilt: mv('volt', 'dtilt', {
     name: 'Leg Sweep', startup: 9, active: 4, total: 32, kbClass: 'neutral',
     hits: [H(0.75, 0.35, 0.9, 0.45, 12, 28, 34, 90, 9, 13)],
-    anim: [K(0, 'NEUTRAL'), K(7 / 32, 'CROUCH'), K(11 / 32, 'SWEEP'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(8 / 32, 'CROUCH'), K(9 / 32, 'SWEEP'), K(13 / 32, 'SWEEP'), K(1, 'NEUTRAL')],
   }),
   fsmash: mv('volt', 'fsmash', {
     name: 'Flame Kick', startup: 14, active: 4, total: 54, kbClass: 'strong', lunge: [0.24, 0],
     hits: [H(0.85, 0.85, 0.9, 0.6, 19, 30, 48, 115, 14, 18)],
-    anim: [K(0, 'NEUTRAL'), K(10 / 54, 'WINDUP_KICK_R'), K(16 / 54, 'KICK_R'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(13 / 54, 'WINDUP_KICK_R'), K(14 / 54, 'KICK_R'), K(18 / 54, 'KICK_R'), K(1, 'NEUTRAL')],
   }),
   usmash: mv('volt', 'usmash', {
     name: 'Thunder Clap', startup: 4, active: 6, total: 44, kbClass: 'strong',
     hits: [H(0.7, 1.15, 0.9, 0.8, 16, 88, 48, 110, 4, 10)],
-    anim: [K(0, 'NEUTRAL'), K(3 / 44, 'CROUCH'), K(7 / 44, 'CLAP'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(3 / 44, 'CROUCH'), K(4 / 44, 'CLAP'), K(10 / 44, 'CLAP'), K(1, 'NEUTRAL')],
   }),
   dsmash: mv('volt', 'dsmash', {
     name: 'Ground Pound', startup: 12, active: 8, total: 52, kbClass: 'neutral',
@@ -431,52 +501,52 @@ const volt = {
     hits: [
       H(0.8, 1.0, 0.9, 0.8, 16, 30, 44, 100, 12, 20),
     ],
-    anim: [K(0, 'NEUTRAL'), K(9 / 52, 'CROUCH'), K(14 / 52, 'POUND'), K(22 / 52, 'POUND'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(11 / 52, 'OVERHEAD'), K(12 / 52, 'POUND'), K(20 / 52, 'POUND'), K(1, 'NEUTRAL')],
   }),
   nair: mv('volt', 'nair', {
     name: 'Volt Spin', startup: 5, active: 16, total: 38, kbClass: 'neutral',
     hits: [H(0, 1.1, 1.2, 0.8, 12, 40, 34, 90, 5, 21)],
-    anim: [K(0, 'NEUTRAL'), K(5 / 38, 'SPIN_A', { hips: [0, 0.8, 0] }), K(13 / 38, 'SPIN_A', { hips: [0, 2.8, 0] }), K(21 / 38, 'SPIN_A', { hips: [0, 4.8, 0] }), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(4 / 38, 'SPIN_A', { hips: [0, 0.3, 0] }), K(5 / 38, 'SPIN_A', { hips: [0, 1, 0] }), K(13 / 38, 'SPIN_A', { hips: [0, 3, 0] }), K(21 / 38, 'SPIN_A', { hips: [0, 5, 0] }), K(1, 'NEUTRAL')],
   }),
   fair: mv('volt', 'fair', {
     name: 'Knee Strike', startup: 16, active: 4, total: 46, kbClass: 'kill', lunge: [0.08, 0],
     hits: [H(0.5, 0.85, 0.7, 0.7, 18, 25, 46, 115, 16, 20)],
-    anim: [K(0, 'NEUTRAL'), K(12 / 46, 'WINDUP_KICK_R'), K(18 / 46, 'KNEE'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(15 / 46, 'WINDUP_KICK_R'), K(16 / 46, 'KNEE'), K(20 / 46, 'KNEE'), K(1, 'NEUTRAL')],
   }),
   bair: mv('volt', 'bair', {
     name: 'Reverse Kick', startup: 12, active: 6, total: 42, kbClass: 'neutral',
     hits: [H(-0.6, 0.65, 0.8, 0.7, 14, 145, 40, 100, 12, 18)],
-    anim: [K(0, 'NEUTRAL'), K(9 / 42, 'WINDUP_KICK_R'), K(14 / 42, 'KICK_BACK'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(11 / 42, 'WINDUP_KICK_R'), K(12 / 42, 'KICK_BACK'), K(18 / 42, 'KICK_BACK'), K(1, 'NEUTRAL')],
   }),
   uair: mv('volt', 'uair', {
     name: 'Sky Kick', startup: 6, active: 8, total: 36, kbClass: 'neutral',
-    hits: [H(0.78, 1.1, 0.8, 1.0, 12, 85, 36, 95, 6, 14)],
-    anim: [K(0, 'NEUTRAL'), K(4 / 36, 'CROUCH'), K(8 / 36, 'KICK_UP'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0.65, 1.5, 0.8, 1.0, 12, 85, 36, 95, 6, 14)],
+    anim: [K(0, 'NEUTRAL'), K(5 / 36, 'CROUCH'), K(6 / 36, 'KICK_UP'), K(14 / 36, 'KICK_UP'), K(1, 'NEUTRAL')],
   }),
   dair: mv('volt', 'dair', {
     name: 'Meteor Stomp', startup: 14, active: 8, total: 44, kbClass: 'strong',
-    hits: [H(0.1, 0.3, 0.8, 0.6, 13, 270, 30, 80, 14, 22)],
-    anim: [K(0, 'NEUTRAL'), K(10 / 44, 'CROUCH'), K(16 / 44, 'STOMP'), K(26 / 44, 'STOMP'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0.4, 0.15, 0.8, 0.6, 13, 270, 30, 80, 14, 22)],
+    anim: [K(0, 'NEUTRAL'), K(13 / 44, 'CROUCH'), K(14 / 44, 'STOMP'), K(22 / 44, 'STOMP'), K(1, 'NEUTRAL')],
   }),
   nspecial: mv('volt', 'nspecial', {
     name: 'Volt Punch', startup: 38, active: 4, total: 70, kbClass: 'kill', special: 'punch', lunge: [0.10, 0],
     hits: [H(0.55, 0.9, 0.9, 0.7, 26, 35, 60, 130, 38, 42)],
-    anim: [K(0, 'NEUTRAL'), K(20 / 70, 'BIG_WINDUP'), K(34 / 70, 'BIG_WINDUP'), K(40 / 70, 'BIG_PUNCH'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(20 / 70, 'BIG_WINDUP'), K(37 / 70, 'BIG_WINDUP'), K(38 / 70, 'BIG_PUNCH'), K(42 / 70, 'BIG_PUNCH'), K(1, 'NEUTRAL')],
   }),
   sspecial: mv('volt', 'sspecial', {
     name: 'Railgun Dash', startup: 12, active: 12, total: 46, kbClass: 'neutral', special: 'spin', lunge: [0, 0.02],
-    hits: [H(0.3, 1.0, 1.3, 1.0, 14, 40, 44, 100, 12, 24)],
-    anim: [K(0, 'NEUTRAL'), K(10 / 46, 'DASH_POSE'), K(16 / 46, 'DASH_POSE'), K(26 / 46, 'DASH_POSE'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    hits: [H(0.1, 1.25, 1.3, 1.0, 14, 40, 44, 100, 12, 24)],
+    anim: [K(0, 'NEUTRAL'), K(11 / 46, 'CROUCH'), K(12 / 46, 'DASH_POSE'), K(24 / 46, 'DASH_POSE'), K(1, 'NEUTRAL')],
   }),
   uspecial: mv('volt', 'uspecial', {
     name: 'Volt Dive', startup: 6, active: 12, total: 54, kbClass: 'strong', special: 'divegrab', lunge: [0.04, 0],
     hits: [H(0.75, 1.0, 1.0, 1.0, 20, 70, 55, 115, 6, 18)],
-    anim: [K(0, 'NEUTRAL'), K(4 / 54, 'CROUCH'), K(8 / 54, 'GRAB'), K(18 / 54, 'GRAB'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(5 / 54, 'CROUCH'), K(6 / 54, 'GRAB'), K(18 / 54, 'GRAB'), K(1, 'NEUTRAL')],
   }),
   dspecial: mv('volt', 'dspecial', {
     name: 'Volt Kick', startup: 10, active: 16, total: 48, kbClass: 'neutral', special: 'divekick', lunge: [0.03, -0.03],
     hits: [H(0.6, 0.6, 0.9, 0.8, 15, 300, 40, 95, 10, 26)],
-    anim: [K(0, 'NEUTRAL'), K(8 / 48, 'CROUCH'), K(14 / 48, 'DIVEKICK'), K(26 / 48, 'DIVEKICK'), K(0.9, 'NEUTRAL'), K(1, 'NEUTRAL')],
+    anim: [K(0, 'NEUTRAL'), K(9 / 48, 'CROUCH'), K(10 / 48, 'DIVEKICK'), K(26 / 48, 'DIVEKICK'), K(1, 'NEUTRAL')],
   }),
 };
 
@@ -484,5 +554,49 @@ const volt = {
 // ids so the Lab's isNative() check treats them as native (free, not stolen).
 const wisp = {};
 for (const s of SLOTS) wisp[s] = { ...volt[s], id: 'wisp_' + s };
+// v0.7: wisp hitboxes are honest to the ghost's body, not volt's kick
+// positions — deep-clone the hits so wisp anchors are independent.
+for (const s of SLOTS) wisp[s].hits = volt[s].hits.map((h) => ({ ...h }));
+// v0.7: wisp-specific anchors, measured from the body-attack strike poses
+// (striker bone / head). Same sizes, damage, angles, KB — only the positional
+// anchor moves to where the ghost's body actually is.
+const WISP_ANCHOR = {
+  jab: [[0.95, 0.9], [0.95, 0.9]],
+  ftilt: [[0.45, 0.9]],
+  utilt: [[1.0, 1.0]],
+  dtilt: [[0.25, 0.7]],
+  fsmash: [[0.45, 0.9]],
+  usmash: [[0.9, 0.9]],
+  dsmash: [[0.95, 0.65]],
+  bair: [[-0.4, 0.95]],
+  uair: [[0, 1.35]],
+  dair: [[0.35, 0.6]],
+  nspecial: [[0.65, 0.5]],
+  uspecial: [[0.95, 0.7]],
+};
+for (const [slot, pts] of Object.entries(WISP_ANCHOR)) {
+  pts.forEach(([dx, dy], j) => { wisp[slot].hits[j].dx = dx; wisp[slot].hits[j].dy = dy; });
+}
+
+// v0.7: wisp kick-family moves are BODY attacks (no legs on a ghost) — same
+// frame data as volt's, re-authored tracks using torso/whole-body motion.
+// Hitboxes generate from the 'striker' bone (body's leading edge).
+// Names renamed to match the new visuals.
+wisp.ftilt.name = 'Spectral Check';
+wisp.ftilt.anim = [K(0, 'NEUTRAL'), K(7 / 32, 'WISP_COIL'), K(8 / 32, 'WISP_SLAM'), K(12 / 32, 'WISP_SLAM'), K(1, 'NEUTRAL')];
+wisp.fsmash.name = 'Spectral Slam';
+wisp.fsmash.anim = [K(0, 'NEUTRAL'), K(13 / 54, 'WISP_COIL'), K(14 / 54, 'WISP_SLAM'), K(18 / 54, 'WISP_SLAM'), K(1, 'NEUTRAL')];
+wisp.fair.name = 'Comet Body';
+wisp.fair.anim = [K(0, 'NEUTRAL'), K(15 / 46, 'WISP_COIL'), K(16 / 46, 'WISP_SLAM'), K(20 / 46, 'WISP_SLAM'), K(1, 'NEUTRAL')];
+wisp.bair.name = 'Back Spin';
+wisp.bair.anim = [K(0, 'NEUTRAL'), K(11 / 42, 'WISP_COIL'), K(12 / 42, 'WISP_SPIN', { hips: [0, 2.6, 0] }), K(18 / 42, 'WISP_SPIN', { hips: [0, 2.6 + Math.PI, 0] }), K(1, 'NEUTRAL')];
+wisp.uair.name = 'Rising Wisp';
+wisp.uair.anim = [K(0, 'NEUTRAL'), K(5 / 36, 'WISP_COIL'), K(6 / 36, 'WISP_UP'), K(14 / 36, 'WISP_UP'), K(1, 'NEUTRAL')];
+wisp.dair.name = 'Plunge';
+wisp.dair.anim = [K(0, 'NEUTRAL'), K(13 / 44, 'WISP_COIL'), K(14 / 44, 'WISP_DOWN'), K(22 / 44, 'WISP_DOWN'), K(1, 'NEUTRAL')];
+wisp.dtilt.name = 'Low Spin';
+wisp.dtilt.anim = [K(0, 'NEUTRAL'), K(8 / 32, 'WISP_COIL'), K(9 / 32, 'WISP_LOWSPIN', { hips: [0, 1.0, -0.18] }), K(13 / 32, 'WISP_LOWSPIN', { hips: [0, 1.0 + Math.PI, -0.18] }), K(1, 'NEUTRAL')];
+wisp.dspecial.name = 'Dive Bomb';
+wisp.dspecial.anim = [K(0, 'NEUTRAL'), K(9 / 48, 'WISP_COIL'), K(10 / 48, 'WISP_DOWN'), K(26 / 48, 'WISP_DOWN'), K(1, 'NEUTRAL')];
 
 export const MOVES = { ronin, volt, wisp };
