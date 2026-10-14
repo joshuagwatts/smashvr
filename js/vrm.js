@@ -39,6 +39,7 @@ export function attachVRMToFighter(f, { vrm, vrm0 }) {
 
   f.root.add(vrm.scene);
   f.vrm = { vrm, vrm0: !!vrm0 };
+  f._isVRM = true; // procedural theme recolors must never touch a VRM model
 }
 
 export function removeVRMFromFighter(f) {
@@ -60,5 +61,6 @@ export function removeVRMFromFighter(f) {
     });
     f.vrm = null;
   }
+  f._isVRM = false;
   if (f.rig && f.rig.group) f.rig.group.visible = true;
 }

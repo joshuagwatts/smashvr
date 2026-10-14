@@ -6,6 +6,7 @@ import { createGame } from './engine.js';
 import { Input } from './input.js';
 import { sfx } from './audio.js';
 import { createFighter } from './fighters.js';
+import { FIGHTER_DEFS } from './moves.js';
 import { loadVRMFile, attachVRMToFighter, removeVRMFromFighter } from './vrm.js';
 import { openLab } from './lab.js';
 
@@ -183,6 +184,25 @@ function startFight(p1def, p2def, m, isDemo = false) {
       toast('VRM attached to P1');
     } catch (err) { toast('VRM attach failed: ' + err.message, true); }
   }
+  // v0.3 colors: mirror match (same def both sides) -> P2 gets the def's
+  // altTheme via the same rig.setTheme path the base theme uses. VRM-driven
+  // fighters keep their own look (f._isVRM check); one VRM side needs no alt.
+  if (p1def === p2def) {
+    const def = FIGHTER_DEFS[p1def];
+    const p2 = game.fighters[1];
+    if (def && def.altTheme && !game.fighters[0]._isVRM && !p2._isVRM &&
+        p2.rig && typeof p2.rig.setTheme === 'function') {
+      p2.rig.setTheme(def.altTheme);
+      p2.theme = { primary: def.altTheme.primary, secondary: def.altTheme.secondary };
+    }
+  }
+  // v0.3 colors: HUD in Smash port colors. The percent number has no
+  // damage-tint semantics (renderHud + css never recolor it), so this is safe.
+  const P1_PORT = '#ff3b30', P2_PORT = '#0a84ff';
+  $('hud-p1-name').style.color = P1_PORT;
+  $('hud-p2-name').style.color = P2_PORT;
+  $('hud-p1-pct').style.color = P1_PORT;
+  $('hud-p2-pct').style.color = P2_PORT;
   if (DEBUG) window.__sv = { game };
 }
 

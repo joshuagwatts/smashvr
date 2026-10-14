@@ -11,12 +11,16 @@ export const FIGHTER_DEFS = {
     weight: 100, runSpeed: 0.13, airSpeed: 0.11, fallSpeed: 0.25, fastFall: 0.46,
     jumpV: 0.22, djumpV: 0.20, traction: 0.6,
     theme: { primary: '#e23b2e', secondary: '#ffb13d' },
+    // v0.3 mirror match: P2 alt palette (teal + white) when both sides pick ronin
+    altTheme: { primary: '#2ee2a8', secondary: '#f2f5f7' },
   },
   volt: {
     name: 'VOLT', cls: 'heavy',
     weight: 114, runSpeed: 0.15, airSpeed: 0.12, fallSpeed: 0.28, fastFall: 0.52,
     jumpV: 0.21, djumpV: 0.19, traction: 0.55,
     theme: { primary: '#2e9be2', secondary: '#7df9ff' },
+    // v0.3 mirror match: P2 alt palette (orange + pale yellow) when both sides pick volt
+    altTheme: { primary: '#e27a2e', secondary: '#ffe27d' },
   },
 };
 
@@ -58,7 +62,7 @@ export const NEUTRAL_POSE = {
   upperLegR: [0, 0, 0.26], lowerLegR: [0, 0, -0.32], footR: [0, 0, 0.05],
 };
 
-const POSES = {
+export const POSES = {
   WINDUP_SHORT: { upperArmR: [0, 0, 0.5], lowerArmR: [0, 0, 1.7], spine: [0, 0, 0.08], chest: [0, 0.2, 0.05] },
   JAB_R: { upperArmR: [0, 0, 1.55], lowerArmR: [0, 0, 0.15], spine: [0, 0, -0.22], chest: [0, -0.15, -0.08] },
   WINDUP_R: { upperArmR: [0, 0, -0.9], lowerArmR: [0, 0, -0.6], spine: [0, 0, 0.3], chest: [0, 0.4, 0.15], hips: [0, 0.2, 0] },
@@ -206,6 +210,28 @@ const POSES = {
     spine: [0, 0, -0.55], chest: [0, 0, -0.2],
     upperArmR: [0, 0, -1.4], lowerArmR: [0, 0, -0.4],
     upperArmL: [0, 0, -1.2], lowerArmL: [0, 0, -0.5], head: [0, 0, -0.2],
+  },
+  // v0.3 grab game
+  GRAB_ATTEMPT: {
+    upperArmR: [0, 0, 1.6], lowerArmR: [0, 0, 0.2],
+    upperArmL: [0, 0, 1.6], lowerArmL: [0, 0, 0.2],
+    spine: [0, 0, -0.45], chest: [0, 0, -0.15],
+    upperLegR: [0, 0, 0.5], lowerLegR: [0, 0, -0.6],
+    upperLegL: [0, 0, -0.3], lowerLegL: [0, 0, 0.35], head: [0, 0, -0.1],
+  },
+  HOLDING: {
+    upperArmR: [0, 0, 0.9], lowerArmR: [0, 0, 1.9],
+    upperArmL: [0, 0, -0.5], lowerArmL: [0, 0, -1.4],
+    spine: [0, 0, -0.3], chest: [0, 0.2, -0.1],
+    upperLegR: [0, 0, 0.3], lowerLegR: [0, 0, -0.35],
+    upperLegL: [0, 0, -0.3], lowerLegL: [0, 0, 0.35], head: [0, 0, 0.1],
+  },
+  GRABBED: {
+    upperArmR: [0, 0, 2.6], lowerArmR: [0, 0, 0.5],
+    upperArmL: [0, 0, -2.6], lowerArmL: [0, 0, -0.5],
+    spine: [0, 0, 0.25], head: [0, 0, -0.35],
+    upperLegR: [0, 0, 0.5], lowerLegR: [0, 0, -0.9],
+    upperLegL: [0, 0, 0.4], lowerLegL: [0, 0, -0.8],
   },
 };
 

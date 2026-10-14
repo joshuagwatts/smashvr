@@ -4,6 +4,9 @@
 let ctx = null;
 let master = null;
 let noiseBuf = null;
+// v0.3 charged-smash tone: one persistent osc whose pitch tracks charge
+let chargeOsc = null;
+let chargeGain = null;
 
 function ac() {
   if (!ctx) {
@@ -112,5 +115,48 @@ export const sfx = {
   countdownGo() {
     tone({ f0: 523, dur: 0.12, type: 'square', vol: 0.2 });
     tone({ f0: 784, dur: 0.22, type: 'square', vol: 0.2, delay: 0.1 });
+  },
+
+  // v0.3 parry: bright metallic "ting", distinct from shieldHit
+  parry() {
+    tone({ f0: 1500, f1: 2300, dur: 0.12, type: 'triangle', vol: 0.28 });
+    noise({ dur: 0.08, vol: 0.18, freq: 6500, type: 'highpass' });
+    tone({ f0: 750, f1: 1150, dur: 0.1, type: 'sine', vol: 0.15, delay: 0.02 });
+  },
+
+  // v0.3 charged smash: persistent tone, pitch rises with charge 0..1
+  chargeStart() {
+    try {
+      const c = ac();
+      this.chargeStop();
+      chargeOsc = c.createOscillator();
+      chargeGain = c.createGain();
+      chargeOsc.type = 'sawtooth';
+      chargeOsc.frequency.value = 110;
+      chargeGain.gain.value = 0.0001;
+      chargeOsc.connect(chargeGain);
+      chargeGain.connect(master);
+      chargeOsc.start();
+      chargeGain.gain.setTargetAtTime(0.055, c.currentTime, 0.06);
+    } catch (e) { /* audio unavailable — game still runs */ }
+  },
+
+  chargeSet(u01) {
+    try {
+      if (!chargeOsc || !ctx) return;
+      const u = Math.max(0, Math.min(1, u01));
+      chargeOsc.frequency.setTargetAtTime(110 + u * 440, ctx.currentTime, 0.03);
+    } catch (e) { /* ignore */ }
+  },
+
+  chargeStop() {
+    try {
+      if (chargeOsc && ctx) {
+        const o = chargeOsc, g = chargeGain;
+        chargeOsc = null; chargeGain = null;
+        g.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.03);
+        o.stop(ctx.currentTime + 0.15);
+      }
+    } catch (e) { /* ignore */ }
   },
 };

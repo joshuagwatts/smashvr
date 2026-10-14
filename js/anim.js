@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { BONE_NAMES, VRM_BONE_MAP } from './rig.js';
-import { NEUTRAL_POSE } from './moves.js';
+import { NEUTRAL_POSE, POSES } from './moves.js';
 
 const _euler = new THREE.Euler();
 let _clock = 0;
@@ -74,6 +74,7 @@ function locomotionPose(f, t) {
       P.spine = [0, 0, -0.2];
       break;
     }
+    case 'airdodge':
     case 'fall': {
       P.upperArmR = [0, 0, 2.3]; P.lowerArmR = [0, 0, 0.4];
       P.upperArmL = [0, 0, -2.3]; P.lowerArmL = [0, 0, -0.4];
@@ -82,6 +83,7 @@ function locomotionPose(f, t) {
       P.head = [0, 0, -0.15];
       break;
     }
+    case 'squat':
     case 'crouch': {
       P.spine = [0, 0, -0.5];
       P.upperLegR = [0, 0, 0.95]; P.lowerLegR = [0, 0, -1.6];
@@ -119,6 +121,88 @@ function locomotionPose(f, t) {
       P.upperLegL = [0, 0, 0.9]; P.lowerLegL = [0, 0, -1.7];
       P.upperArmR = [0, 0, 0.6]; P.upperArmL = [0, 0, -0.6];
       P.head = [0, 0, -0.5];
+      break;
+    }
+    // ---- v0.3 genre mechanics ----
+    case 'charge': {
+      // deep windup crouch, trembling harder the longer the charge holds
+      P.spine = [0, 0, -0.55];
+      P.upperLegR = [0, 0, 1.0]; P.lowerLegR = [0, 0, -1.7];
+      P.upperLegL = [0, 0, 1.0]; P.lowerLegL = [0, 0, -1.7];
+      P.upperArmR = [0, 0, -1.2]; P.lowerArmR = [0, 0, -0.8];
+      P.upperArmL = [0, 0, 1.2]; P.lowerArmL = [0, 0, -1.2];
+      P.head = [0, 0, 0.3];
+      const tr = Math.sin(t * 42) * 0.025 * Math.min(1, (f._chargeT || 0) / 30);
+      P.spine[2] += tr;
+      break;
+    }
+    case 'grab':
+      return Object.assign(basePose(), POSES.GRAB_ATTEMPT);
+    case 'holding':
+      return Object.assign(basePose(), POSES.HOLDING);
+    case 'grabbed':
+      return Object.assign(basePose(), POSES.GRABBED);
+    case 'ledgeroll':
+    case 'roll': {
+      // tucked spin: hips rotate a full turn over the roll
+      const u = Math.min(1, sf / 28);
+      P.spine = [0, 0, -0.7];
+      P.upperLegR = [0, 0, 1.3]; P.lowerLegR = [0, 0, -2.2];
+      P.upperLegL = [0, 0, 1.3]; P.lowerLegL = [0, 0, -2.2];
+      P.upperArmR = [0, 0, 0.5]; P.lowerArmR = [0, 0, 2.2];
+      P.upperArmL = [0, 0, -0.5]; P.lowerArmL = [0, 0, -2.2];
+      P.hips = [0, u * Math.PI * 2 * (f._rollDir || 1), 0];
+      P.head = [0, 0, 0.4];
+      break;
+    }
+    case 'spotdodge': {
+      // crouch extra deep, arms tucked
+      P.spine = [0, 0, -0.78];
+      P.upperLegR = [0, 0, 1.25]; P.lowerLegR = [0, 0, -2.05];
+      P.upperLegL = [0, 0, 1.25]; P.lowerLegL = [0, 0, -2.05];
+      P.upperArmR = [0, 0, 0.3]; P.lowerArmR = [0, 0, 1.9];
+      P.upperArmL = [0, 0, -0.3]; P.lowerArmL = [0, 0, -1.9];
+      P.head = [0, 0, 0.42];
+      break;
+    }
+    case 'ledge': {
+      // hanging off the edge, arms up gripping
+      P.upperArmR = [0, 0, 2.9]; P.lowerArmR = [0, 0, 0.3];
+      P.upperArmL = [0, 0, 2.9]; P.lowerArmL = [0, 0, 0.3];
+      P.spine = [0, 0, -0.15]; P.head = [0, 0, -0.3];
+      P.upperLegR = [0, 0, 0.6]; P.lowerLegR = [0, 0, -1.0];
+      P.upperLegL = [0, 0, 0.5]; P.lowerLegL = [0, 0, -0.9];
+      break;
+    }
+    case 'ledgegetup': {
+      // climbing over: deep crouch rising
+      P.spine = [0, 0, -0.6];
+      P.upperLegR = [0, 0, 1.1]; P.lowerLegR = [0, 0, -1.8];
+      P.upperLegL = [0, 0, 0.9]; P.lowerLegL = [0, 0, -1.6];
+      P.upperArmR = [0, 0, 2.4]; P.lowerArmR = [0, 0, 0.4];
+      P.upperArmL = [0, 0, 2.2]; P.lowerArmL = [0, 0, 0.5];
+      P.head = [0, 0, -0.2];
+      break;
+    }
+    case 'ledgeattack':
+      return Object.assign(basePose(), POSES.PUNCH_R);
+    case 'tech': {
+      // quick slap-down getup
+      P.spine = [0, 0, -0.65];
+      P.upperLegR = [0, 0, 1.15]; P.lowerLegR = [0, 0, -1.9];
+      P.upperLegL = [0, 0, 1.15]; P.lowerLegL = [0, 0, -1.9];
+      P.upperArmR = [0, 0, 0.9]; P.upperArmL = [0, 0, -0.9];
+      P.head = [0, 0, 0.35];
+      break;
+    }
+    case 'misstech': {
+      // flat on the back, vulnerable
+      P.spine = [0, 0, -1.25];
+      P.upperLegR = [0, 0, 1.5]; P.lowerLegR = [0, 0, -0.4];
+      P.upperLegL = [0, 0, 1.5]; P.lowerLegL = [0, 0, -0.4];
+      P.upperArmR = [0, 0, 0.4]; P.lowerArmR = [0, 0, 0.6];
+      P.upperArmL = [0, 0, -0.4]; P.lowerArmL = [0, 0, -0.6];
+      P.head = [0, 0, -0.6];
       break;
     }
     case 'respawn':
@@ -162,8 +246,9 @@ export function tickFighterVisual(f, dt) {
   }
   applyPose(f, pose);
   if (f.vrm && f.vrm.vrm) f.vrm.vrm.update(dt); // spring bones, etc.
-  // Respawn invulnerability blink
-  if (f.root) f.root.visible = !(f.invuln > 0 && Math.floor(_clock * 12) % 2 === 1);
+  // Respawn invulnerability blink — only while respawning, so dodge/ledge
+  // intangibility (which also uses invuln) doesn't strobe the fighter.
+  if (f.root) f.root.visible = !(f.state === 'respawn' && f.invuln > 0 && Math.floor(_clock * 12) % 2 === 1);
 }
 
 export function setFighterTheme(f, theme) {

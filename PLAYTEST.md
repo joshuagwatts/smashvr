@@ -316,3 +316,188 @@ PLAYTEST.md (this section).
   blast line when hit dies during the freeze (correct outcome, camera targets
   the hit position).
 - **CPU AI quality** — still not evaluated beyond not-suiciding.
+
+## Genre pass v0.3 (mechanics) (2026-10-13)
+
+Joshua's v0.3 directive: survey the Smash-like genre and implement the common
+ground. Shipped the full mechanics set (engine half; mirror-match alt colors
+are a separate pass, untouched here). Per his call: Melee-style charged
+smashes (NOT 64-pure), Space+J = grab, Space+direction = roll, Space tap =
+spot dodge, Space in air = air dodge.
+
+### 1. Charged smashes (Melee-style)
+
+Grounded K enters a `charge` state (max 60 ticks) instead of firing; release
+fires with `mult = 1 + 0.4 * (chargeTicks/60)` (1.0x -> 1.4x), applied to BOTH
+damage and knockback via a new `att.pow` field multiplied after `knockback()`
+(the kb formula itself is untouched). Air K is unchanged (immediate aerial).
+Charge visuals: theme-colored glow sprite scaling/brightening with charge
+(`fx.chargeGlowTick`), trembling crouch pose, tiny camera tremor at full
+charge, rising-pitch charge tone (`sfx.chargeStart/Set/Stop`). Getting hit,
+grabbed, or KO'd mid-charge kills the tone+glow. Measured on ronin fsmash:
+tap = 18.12 dmg, 30t = 21.60, 60t = 25.20; launch vx ratio full/tap = 1.79.
+Lab pricing stays on uncharged values. Controls card: "K (hold) = charge
+smash, release to fire".
+
+### 2. Grab game
+
+Space+J on the ground (from neutral or out of shield) -> `grab` state: grab
+box active ticks 4-9 (range ~1.3u), 30-tick whiff = punishable. Connects
+**through shield** (explicit `def.state==='shield'` check, bypassing the
+shield-damage branch — no shield damage on connect). Victim -> `grabbed`,
+grabber -> `holding`, victim locked to grabber. Pummel (bare J): +2%, 12-tick
+cooldown. Throws (direction+J): fthrow 8dmg/40°, bthrow 8/140°, uthrow
+9/85°, dthrow 7/290°, all via `knockback()` with baseKB 45 / kbGrowth 95.
+Mash-out: victim holds 100 + percent*0.9 ticks; every victim
+attack/special/jump/shield press shaves 14; at 0 both to idle with the victim
+pushed slightly away. Getting hit breaks any grab involvement cleanly
+(`releaseGrab`). New POSES: GRAB_ATTEMPT / HOLDING / GRABBED. Note: dthrow's
+downward launch slams into a tech situation — verified it produces `misstech`
+without a shield press.
+
+### 3. Dodges
+
+- **Roll** (Space+direction, ground): 28 ticks, intangible 4-20, travels 3.2u
+  (can pass behind), stops at stage edges.
+- **Spot dodge** (Space tapped, released within 8 ticks, no direction):
+  20 ticks, intangible 3-15, stationary.
+- **Air dodge** (Space in air): 26 ticks, intangible 4-18, drifts at
+  airSpeed*0.8 with held direction, then -> `fall` with `jumpsUsed=1` (no
+  double jump after).
+Intangibility reuses `invuln`; the respawn blink in anim.js is now gated on
+`state==='respawn'` so dodges/ledge don't strobe. Verified: roll and spot
+dodge both pass through an active fsmash at 0%, air dodge avoids a fireball
+(control: no dodge = 7%).
+
+### 4. Ledge game
+
+`physics()` snap check: falling, offstage (|x|>7), inside the snap box
+(|x|-7<1.3, y in [-2.6, 0.6]), facing the stage, `_canGrabLedge` (re-armed on
+every landing) -> `ledge`: snap to (edge, -0.5), invuln 40, 320-tick max hang
+-> forced getup. Options: toward-stage direction -> `ledgegetup` (22t, intan
+10); J -> `ledgeattack` (26t, 8dmg/40° hitbox active 8-14); Space ->
+`ledgeroll` (30t, 3u inward, intan 4-22); W -> jump (jumpV*0.92, fresh double
+jump). All four verified to reach stage/air from a below-edge snap.
+
+### 5. Teching
+
+`game._tick` counter added; `_lastShieldPress` tracked on every shield press
+edge in all states. `land()`: airborne landing in `hitstun` with shield
+pressed within 10 ticks -> `tech` (18t, invuln 14, vy 0.14 hop + spark);
+otherwise -> `misstech` (45t vulnerable lying, small bounce). Verified both
+paths.
+
+### 6. Short hop via jump-squat
+
+`jumpP` (ground or air) -> `squat` (3 ticks, crouch pose) instead of instant
+jump; jump still held at squat end -> full (jumpV/djumpV), released -> short
+(55%). Drop-through-platform and attack-priority ordering kept. Measured:
+short apex 0.99u vs full 3.35u. AI recovery jump now holds (not taps) so the
+AI still gets full jumps offstage.
+
+### 7. Parry (perfect shield)
+
+Shield raised within 3 ticks of the hit (`_shieldStartTick`) -> parry: 0
+damage, 0 shield damage, both frozen 6 ticks, attacker pushed back
+(vx = -facing*0.18), blue-white spark + distinct `sfx.parry()` "ting".
+Verified vs a late-shield control (normal shield damage).
+
+### CPU AI (minimal)
+
+`thinkAI`: `ledge` state -> hold toward-stage direction (normal getup);
+rare roll-away when the foe is mid-attack in range (`shieldTap` one-shot
+consumed in `aiControl`); recovery jump holds for a full jump. New states all
+auto-resolve; grab/hold/grabbed driven by the grab logic. 45s CPU-vs-CPU soak:
+states seen include charge, roll, ledgegetup, misstech — 0 invalid, 0 stuck,
+0 errors.
+
+### Verification
+
+- `test/feel_v03.mjs` (NEW, deterministic manual-tick driver: paused 2P
+  versus, inputs via `game._human`, tick-by-tick): **40/40**
+- `test/playtest.mjs`: 19/19 (no regressions)
+- `test/feel_v02.mjs`: 11/11 (updated for the charge world: shake sampled
+  after release, camera z read once the push-in develops)
+- `test/test_logic.mjs`: 14/14; `test/hitbox_sync.mjs`: 263/263;
+  `test/angle_bands.mjs`: all in band; `test/kb_scaling.mjs`: curves + KO%
+  sane
+- Screenshots: `verify/charge_full.png` (full-charge glow), 
+  `verify/grab_throw.png` (hold), `verify/roll.png` (mid-roll tuck)
+- Controls card in index.html documents all v0.3 inputs (both columns)
+
+### Bugs fixed during the pass (real ones)
+
+8. **`edges()` didn't carry held button bools** — `stepCharge`'s `!e.smash`
+   release check was always true, so every charge released at 1 tick
+   (found by the 21.6/25.2 damage checks failing at 18.12).
+9. **`land()`'s new-state idle reset fired on the every-tick ground snap** —
+   rolls/spotdodges were canceled back to idle on their first tick. The
+   reset is now `wasAir`-gated for the new states (jump/fall/helpless keep
+   the original unguarded behavior).
+
+### Honest not-verified list (post-v0.3)
+
+- **Game feel is still his call** — the mechanics are in, but only his hands
+  decide (unchanged).
+- **Real VRM file import** — still no .vrm on hand (unchanged).
+- **Audio** — still muted headless; charge tone / parry ting not heard.
+- **Grab-vs-grab and projectile-into-grab edge cases** — release paths are
+  coded and the soak didn't trip them, but 1v1 projectile-while-holding is
+  untested by hand.
+- **AI never grabs, techs deliberately, or parries** — emergent only; its
+  decision quality is still unevaluated.
+- **Mirror-match alt colors** — explicitly the next pass, not this one.
+
+## Genre pass v0.3 (colors) (2026-10-13)
+
+Mirror-match distinguishability + Smash port-color conventions. Colors only —
+no mechanics, frame data, or Lab changes.
+
+### 1. Mirror-match alt palette
+- `FIGHTER_DEFS` gained `altTheme` per fighter: ronin alt = teal `#2ee2a8` +
+  white `#f2f5f7`; volt alt = orange `#e27a2e` + pale yellow `#ffe27d`
+- When `p1def === p2def`, P2's procedural rig is retinted via the existing
+  `rig.setTheme()` path (same code path the base theme uses) in
+  `startFight` (main.js); `fighter.theme` is updated to match so saved-theme
+  bookkeeping stays consistent
+- VRM imported fighters keep their own look: `attachVRMToFighter` now sets
+  `f._isVRM = true` (cleared to `false` on remove) and the alt-tint is
+  skipped whenever either side is VRM-driven. VRM-vs-procedural already
+  looks different, so no alt is needed there either
+- Lab is untouched: the saved `smashvr_theme_<defId>` still wins for P1;
+  the alt only overrides P2 on a mirror match
+
+### 2. Port-colored ground rings
+- Flat `THREE.RingGeometry` (inner 0.55, outer 0.75) under each fighter at
+  y = 0.02, `depthWrite: false` so it never z-fights the stage edge —
+  P1 `#ff3b30` red, P2 `#0a84ff` blue (Smash convention)
+- Ring tracks the fighter's x/z every frame via one line in engine
+  `syncRoot` (the only engine.js change besides ring creation + destroy
+  cleanup; no mechanic logic altered). Always rendered: cpu / 2p / demo
+
+### 3. HUD port colors
+- `hud-p1-name` / `hud-p1-pct` in P1 red, `hud-p2-name` / `hud-p2-pct` in
+  P2 blue, set once in `startFight` (`renderHud` only touches text, so the
+  colors persist). Verified the percent number has no pre-existing
+  damage-tint semantics (renderHud + css/style.css never recolor it), so
+  nothing was overridden
+
+### Verification
+- `test/color_v03.mjs` (NEW, browser harness via bootstrap): **26/26** —
+  mirror (ronin vs ronin): P1 materials keep `#e23b2e`/`#ffb13d`, P2
+  materials retinted to `#2ee2a8`/`#f2f5f7` (no base red left), `theme`
+  records the alt, rings red/blue in scene with correct geometry and
+  y=0.02, ring.x tracks fighter.x atomically, HUD elements computed to
+  `rgb(255, 59, 48)` / `rgb(10, 132, 255)`; mixed (ronin vs volt): base
+  themes intact, no alt bleed, rings + HUD correct; no page/console errors
+- Screenshots: `verify/mirror.png` (white/teal P2 vs red/orange P1, rings
+  + port HUD visible), `verify/ports.png` (ronin vs volt)
+- No regressions: `test/playtest.mjs` 19/19, `test/feel_v03.mjs` 40/40
+
+### Honest not-verified list (post-v0.3 colors)
+- **VRM alt-skip path** — `_isVRM` flag is set/cleared and procedural
+  fighters read falsy, but the skip itself needs a real .vrm file on hand
+  to exercise (same gap as the rest of the VRM import)
+- **Saved lab theme + mirror combo** — the code path applies alt to P2
+  regardless of saved themes, but not exercised headless with localStorage
+  presets (fresh profile in the harness)

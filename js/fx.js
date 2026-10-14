@@ -230,6 +230,34 @@ export function shieldBubbleAttach(f) {
   return mesh;
 }
 
+// v0.3 charged smash: theme-colored glow sprite attached to the fighter's
+// root, scaling/brightening with charge 0..1. Pass u01=null to remove it.
+export function chargeGlowTick(f, u01) {
+  if (!_scene || !f.root) return;
+  if (u01 == null) { chargeGlowClear(f); return; }
+  const u = Math.max(0, Math.min(1, u01));
+  let s = f._chargeGlow;
+  if (!s) {
+    s = makeSprite(f.theme ? f.theme.primary : '#ffffff', 1.0);
+    s.position.set(0, 1.0, 0.05);
+    f.root.add(s);
+    f._chargeGlow = s;
+  }
+  const pulse = 1 + Math.sin(performance.now() * 0.02) * 0.12;
+  const sc = (0.9 + u * 2.4) * pulse;
+  s.scale.set(sc, sc, 1);
+  s.material.opacity = 0.22 + u * 0.55;
+  try { s.material.color.set(f.theme ? f.theme.primary : '#ffffff'); } catch (e) {}
+}
+
+export function chargeGlowClear(f) {
+  const s = f._chargeGlow;
+  if (!s) return;
+  try { if (s.parent) s.parent.remove(s); } catch (e) {}
+  try { s.material.dispose(); } catch (e) {}
+  f._chargeGlow = null;
+}
+
 export function updateShieldBubble(f) {
   const m = f._shieldMesh;
   if (!m) return;

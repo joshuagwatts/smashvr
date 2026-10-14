@@ -10,6 +10,7 @@ import { tickFighterVisual } from './anim.js';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
+  chargeGlowTick, chargeGlowClear,
 } from './fx.js';
 import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js';
 import { Input } from './input.js';
@@ -49,10 +50,12 @@ function blankHold() {
 function edges(prev, cur) {
   return {
     left: cur.left, right: cur.right, up: cur.up, down: cur.down, shield: cur.shield,
+    jump: cur.jump, attack: cur.attack, smash: cur.smash, special: cur.special, // v0.3: held
     jumpP: cur.jump && !prev.jump,
     attackP: cur.attack && !prev.attack,
     smashP: cur.smash && !prev.smash,
     specialP: cur.special && !prev.special,
+    shieldP: cur.shield && !prev.shield, // v0.3: shield pressed edge
   };
 }
 
@@ -71,13 +74,20 @@ function readHuman(p) {
 
 function thinkAI(f, foe, a) {
   const h = blankHold();
+
+  // v0.3: hanging on the ledge — take the normal getup (hold toward stage)
+  if (f.state === 'ledge') {
+    h[f.x > 0 ? 'left' : 'right'] = true;
+    return h;
+  }
+
   const offstage = !f.onGround && (f.x < STAGE.x0 || f.x > STAGE.x1 || f.y < 0.3);
 
   if (offstage) {
     // recover: drift to stage, jump, then up-special
     h[f.x > 0 ? 'left' : 'right'] = true;
     if (f.y < -0.8 && f.jumpsUsed < 1) {
-      a.tap.jump = true;
+      h.jump = true; // held (not a tap) so the jump-squat gives a FULL jump
     } else if (f.y < -2.0 && !a.usedUpB) {
       h.up = true;
       a.tap.special = true;
@@ -93,6 +103,12 @@ function thinkAI(f, foe, a) {
 
   if (adx < 2.6 && ady < 2.6) {
     // in range — fight
+    // v0.3: occasionally roll away from an incoming attack (rare)
+    if (foe.state === 'attack' && adx < 2 && r < 0.15) {
+      h[dx > 0 ? 'left' : 'right'] = true;
+      a.shieldTap = true; // one-tick shield press + direction = roll
+      return h;
+    }
     if (f.onGround) {
       if (r < 0.34) {
         a.tap.attack = true;
@@ -133,6 +149,7 @@ function aiControl(f, foe) {
   else { a.cool = 12; h = thinkAI(f, foe, a); a.hold = h; }
   for (const k in a.tap) if (a.tap[k]) h[k] = true; // one-shot presses
   a.tap = {};
+  if (a.shieldTap) { h.shield = true; a.shieldTap = false; } // v0.3: roll trigger
   if (a.shieldT > 0) { a.shieldT--; h.shield = true; }
   return h;
 }
@@ -173,8 +190,36 @@ export function createGame(opts) {
     f._plat = null;
     f._dropT = 0;
     f._fastFalling = false;
-    f._ai = { cool: 0, hold: blankHold(), tap: {}, shieldT: 0, usedUpB: false };
+    f._ai = { cool: 0, hold: blankHold(), tap: {}, shieldT: 0, usedUpB: false, shieldTap: false };
+    // v0.3 genre mechanics
+    f._lastShieldPress = -100000;
+    f._shieldStartTick = -100000;
+    f._canGrabLedge = true;
+    f._chargeT = 0;
+    f._chargeMult = 1;
+    f._chargeGlow = null;
+    f._victim = null;
+    f._grabber = null;
+    f._grabDur = 0;
+    f._pummelCD = 0;
+    f._rollDir = 1;
+    f._squatAir = false;
     scene.add(f.root);
+    // v0.3 colors: port-colored ground ring (Smash convention: P1 red, P2 blue).
+    // Flat RingGeometry at y~0.02, depthWrite off so it never z-fights the stage.
+    // Rendered in all modes (cpu / versus / demo).
+    const portColor = i === 0 ? 0xff3b30 : 0x0a84ff;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.75, 48),
+      new THREE.MeshBasicMaterial({
+        color: portColor, transparent: true, opacity: 0.9,
+        side: THREE.DoubleSide, depthWrite: false,
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(f.x, 0.02, 0);
+    scene.add(ring);
+    f._portRing = ring;
     syncRoot(f);
   });
 
@@ -184,6 +229,7 @@ export function createGame(opts) {
     camera,
     paused: false,
     _acc: 0,
+    _tick: 0,                    // v0.3: global fight tick counter (tech/parry windows)
     _cd: 100,                    // countdown ticks (~1.7s of 3-2-1)
     _timer: MATCH_TIME * 60,
     _human: [blankHold(), blankHold()],
@@ -214,6 +260,7 @@ export function createGame(opts) {
       if (this.state !== 'fight') return;
 
       if (--this._timer <= 0) { this.timeUp(); return; }
+      this._tick++; // v0.3: advance the global tick counter every fight tick
 
       const [f1, f2] = fighters;
       stepFighter(this, f1, isCPU(0) ? aiControl(f1, f2) : this._human[0], f2);
@@ -269,6 +316,13 @@ export function createGame(opts) {
       scene.remove(stageGroup);
       for (const f of fighters) {
         if (f._shieldMesh) { f.root.remove(f._shieldMesh); f._shieldMesh = null; }
+        if (f._portRing) { // v0.3 colors
+          scene.remove(f._portRing);
+          f._portRing.geometry.dispose();
+          f._portRing.material.dispose();
+          f._portRing = null;
+        }
+        chargeGlowClear(f);
         scene.remove(f.root);
       }
       clearFX();
@@ -308,6 +362,7 @@ function syncRoot(f) {
   f.root.position.set(f.x, f.y, 0);
   f.root.scale.x = f.facing; // face the model toward f.facing
   f.root.scale.y = 1; f.root.scale.z = 1;
+  if (f._portRing) f._portRing.position.set(f.x, 0.02, 0); // v0.3 colors: ring tracks fighter x/z
 }
 
 function updateCamera(game) {
@@ -363,6 +418,9 @@ function stepFighter(game, f, cur, foe) {
   if (f._dropT > 0) f._dropT--;
   if (f.hitPause > 0) { f.hitPause--; return; } // frozen — no physics
 
+  // v0.3: shield press timing for teching/parry/spot-dodge (all states)
+  if (e.shieldP) f._lastShieldPress = game._tick;
+
   if (f.shieldHP < SHIELD_MAX && f.state !== 'shield') {
     f.shieldHP = Math.min(SHIELD_MAX, f.shieldHP + 0.25);
   }
@@ -394,6 +452,52 @@ function stepFighter(game, f, cur, foe) {
         f.vx += Math.sign(dd) * Math.min(Math.abs(dd), 0.35);
       }
       physics(game, f);
+      return;
+    // ---- v0.3 genre mechanics ----
+    case 'charge':
+      stepCharge(game, f, e);
+      return;
+    case 'grab':
+      stepGrab(game, f, e, foe);
+      return;
+    case 'holding':
+      stepHolding(game, f, e, foe);
+      return;
+    case 'grabbed':
+      stepGrabbed(game, f, e);
+      return;
+    case 'roll':
+      stepRoll(game, f);
+      return;
+    case 'spotdodge':
+      stepSpotdodge(game, f);
+      return;
+    case 'airdodge':
+      stepAirdodge(game, f, e);
+      return;
+    case 'squat':
+      stepSquat(game, f, e);
+      return;
+    case 'ledge':
+      stepLedge(game, f, e);
+      return;
+    case 'ledgegetup':
+      physics(game, f);
+      if (f.stateFrame >= 22) setState(f, 'idle');
+      return;
+    case 'ledgeattack':
+      stepLedgeAttack(game, f, foe);
+      return;
+    case 'ledgeroll':
+      stepLedgeRoll(game, f);
+      return;
+    case 'tech':
+      physics(game, f);
+      if (f.stateFrame >= 18) setState(f, 'idle');
+      return;
+    case 'misstech':
+      physics(game, f);
+      if (f.stateFrame >= 45) setState(f, 'idle');
       return;
     default:
       stepControl(game, f, e);
@@ -427,6 +531,17 @@ function physics(game, f) {
       }
     }
   }
+  // v0.3 ledge grab: falling past a main-platform edge, offstage, inside the
+  // snap box, facing the stage, and allowed to grab
+  if (f.vy < 0 && f._canGrabLedge &&
+      (f.state === 'jump' || f.state === 'fall' || f.state === 'helpless' || f.state === 'airdodge') &&
+      Math.abs(f.x) > STAGE.x1 &&
+      Math.abs(f.x) - STAGE.x1 < 1.3 &&
+      f.y > -2.6 && f.y < 0.6 &&
+      Math.sign(f.x) * f.facing === -1) {
+    grabLedge(game, f);
+    return;
+  }
   // walked / knocked off support?
   if (f.onGround) {
     const overMain = f.y === STAGE.top && f.x >= STAGE.x0 - 0.15 && f.x <= STAGE.x1 + 0.15;
@@ -448,9 +563,27 @@ function land(game, f, gy, plat) {
   f.y = gy; f.vy = 0;
   f.onGround = true; f._plat = plat || null;
   f.jumpsUsed = 0;
+  f._canGrabLedge = true; // v0.3: re-arm the ledge grab on every landing
   if (f._ai) f._ai.usedUpB = false;
   if (f.state === 'attack' && wasAir) endAttack(f); // aerial landing cancels
+  else if (f.state === 'hitstun' && wasAir) {
+    // v0.3 teching: shield pressed within 10 ticks of landing -> tech,
+    // otherwise a vulnerable missed-tech bounce
+    if (game._tick - f._lastShieldPress <= 10) {
+      f.vy = 0.14; f.invuln = 14;
+      setState(f, 'tech');
+      hitSpark(f.x, f.y + 0.3, f.theme, 0.35);
+      sfx.shieldHit();
+    } else {
+      f.vy = 0.1; // small bounce, then lying vulnerable
+      setState(f, 'misstech');
+    }
+  }
   else if (f.state === 'jump' || f.state === 'fall' || f.state === 'helpless') setState(f, 'idle');
+  // v0.3: the new states only revert to idle on a REAL landing (wasAir) —
+  // land() also runs every tick as the grounded "snap", which must not
+  // cancel an in-progress roll/spotdodge/airdodge.
+  else if (wasAir && (f.state === 'airdodge' || f.state === 'roll' || f.state === 'spotdodge')) setState(f, 'idle');
 }
 
 function stepControl(game, f, e) {
@@ -480,6 +613,18 @@ function stepControl(game, f, e) {
   f._fastFalling = false;
   if (!f.onGround && e.down && f.vy < 0) { f.vy = -f.fastFall; f._fastFalling = true; }
 
+  // v0.3: grab = shield held + attack pressed edge, on the ground (beats shield)
+  if (e.attackP && e.shield && f.onGround && !e.smashP && !e.specialP) {
+    startGrab(game, f);
+    return;
+  }
+
+  // v0.3: grounded smash press enters the charge; air K still fires immediately
+  if (e.smashP && f.onGround && !e.specialP && !e.attackP) {
+    enterCharge(f);
+    return;
+  }
+
   // attacks take priority over jump (so W+J = utilt, not a jump)
   if (e.attackP || e.smashP || e.specialP) { startAttackFromInput(game, f, e); return; }
 
@@ -489,18 +634,319 @@ function stepControl(game, f, e) {
       f.y -= 0.05; setState(f, 'fall');
       return;
     }
-    if (f.onGround) {
-      f.vy = f.jumpV; f.onGround = false; f.jumpsUsed = 0;
-      setState(f, 'jump'); sfx.jump();
-    } else if (f.jumpsUsed < 1) {
-      f.jumpsUsed++; f.vy = f.djumpV; f._fastFalling = false;
-      setState(f, 'jump'); sfx.jump();
-    }
+    // v0.3 jump-squat: 3 ticks, then full or short hop by jump held at the end
+    if (!f.onGround && f.jumpsUsed >= 1) return; // no double jump left
+    f._squatAir = !f.onGround;
+    setState(f, 'squat');
     return;
   }
 
-  if (e.shield && f.onGround) { enterShield(f); return; }
+  // v0.3: air dodge on shield press in the air
+  if (e.shieldP && !f.onGround) { startAirdodge(f); return; }
+  // v0.3: roll on shield press + direction, on the ground
+  if (f.onGround && e.shieldP && (e.left || e.right)) {
+    startRoll(f, dir !== 0 ? dir : f.facing);
+    return;
+  }
+  if (e.shield && f.onGround) { enterShield(game, f); return; }
   if (e.down && f.onGround) { setState(f, 'crouch'); }
+}
+
+// ---------------------------------------------------------------- v0.3 genre mechanics
+
+// ---- charged smashes (Melee-style) ----
+function enterCharge(f) {
+  f._chargeT = 0; f._chargeMult = 1;
+  f.vx *= 0.5;
+  setState(f, 'charge');
+  sfx.chargeStart();
+}
+
+// smash id chosen by the direction held at release
+function chargeId(f, e) {
+  if (e.up) return 'usmash';
+  if (e.down) return 'dsmash';
+  return 'fsmash';
+}
+
+function stepCharge(game, f, e) {
+  const sf = f.stateFrame;
+  f._chargeT = sf;
+  const u = Math.min(1, sf / 60);
+  chargeGlowTick(f, u);
+  sfx.chargeSet(u);
+  if (sf >= 60) {
+    // tiny tremor shake at full charge
+    game._shakeT = 2; game._shakeDur = 2; game._shakeAmp = 0.05;
+  }
+  f.vx *= 0.8;
+  physics(game, f);
+  if (sf >= 60 || !e.smash) releaseCharge(game, f, e);
+}
+
+function releaseCharge(game, f, e) {
+  const u = Math.min(1, f.stateFrame / 60);
+  const mult = 1 + 0.4 * u; // 1.0x -> 1.4x on damage AND knockback
+  sfx.chargeStop();
+  chargeGlowClear(f);
+  startAttack(f, chargeId(f, e));
+  f._chargeMult = mult; // set AFTER startAttack (which resets it to 1)
+}
+
+function clearChargeFx(f) {
+  try { sfx.chargeStop(); } catch (err) {}
+  chargeGlowClear(f);
+}
+
+// ---- grab game ----
+function startGrab(game, f) {
+  setState(f, 'grab');
+  f._grabConnected = false;
+  f.vx *= 0.5;
+  sfx.whiff();
+}
+
+function hittable(foe) {
+  return foe.state !== 'dead' && foe.state !== 'respawn' && foe.invuln <= 0;
+}
+
+function stepGrab(game, f, e, foe) {
+  const sf = f.stateFrame;
+  // active grab box ticks 4-9: in front, range ~1.3u
+  if (sf >= 4 && sf <= 9 && !f._grabConnected && hittable(foe)) {
+    const gx = f.x + f.facing * 1.3, gy = f.y + 0.6;
+    if (rectsOverlap(gx, gy, 1.0, 1.2, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+      f._grabConnected = true;
+      f._victim = foe; foe._grabber = f;
+      exitShieldMesh(foe);
+      clearChargeFx(foe); // a grabbed charger loses the charge (tone + glow)
+      foe.vx = 0; foe.vy = 0; foe.hitPause = 0;
+      setState(foe, 'grabbed');
+      setState(f, 'holding');
+      // mash-out clock: 100 ticks + ~0.9 per percent point on the victim
+      f._grabDur = Math.round(100 + foe.percent * 0.9);
+      f._pummelCD = 0;
+      hitSpark(gx, gy, f.theme, 0.3);
+      sfx.hit(0.25);
+      return;
+    }
+  }
+  f.vx *= 0.8; // whiff is rooted and punishable
+  physics(game, f);
+  if (sf >= 30 && !f._grabConnected) setState(f, 'idle');
+}
+
+function stepHolding(game, f, e, foe) {
+  const v = f._victim;
+  if (!v || v.state !== 'grabbed') { f._victim = null; setState(f, 'idle'); return; }
+  // victim locked to the grabber
+  v.x = f.x + f.facing * 0.7; v.y = f.y; v.vx = 0; v.vy = 0;
+  if (f._pummelCD > 0) f._pummelCD--;
+  f._grabDur--;
+  if (f._grabDur <= 0) {
+    // mashed out — both to idle, victim pushed slightly away
+    v._grabber = null; f._victim = null;
+    v.x = f.x + f.facing * 1.0; v.vx = f.facing * 0.1;
+    setState(v, 'idle'); setState(f, 'idle');
+    return;
+  }
+  if (e.attackP) {
+    const hdir = (e.right ? 1 : 0) - (e.left ? 1 : 0);
+    if (e.up) doThrow(game, f, v, 'uthrow');
+    else if (e.down) doThrow(game, f, v, 'dthrow');
+    else if (hdir !== 0) doThrow(game, f, v, hdir === f.facing ? 'fthrow' : 'bthrow');
+    else if (f._pummelCD <= 0) {
+      // pummel: +2%, 12-tick cooldown
+      v.percent += 2; f._pummelCD = 12;
+      hitSpark(v.x, v.y + 1, f.theme, 0.2);
+      sfx.hit(0.2);
+    }
+  }
+  physics(game, f);
+}
+
+const THROWS = {
+  fthrow: { dmg: 8, angle: 40 },
+  bthrow: { dmg: 8, angle: 140 },
+  uthrow: { dmg: 9, angle: 85 },
+  dthrow: { dmg: 7, angle: 290 },
+};
+
+function doThrow(game, f, v, which) {
+  const T = THROWS[which];
+  f._victim = null; v._grabber = null;
+  applyHit(game,
+    { facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
+    v, { dmg: T.dmg, angle: T.angle, baseKB: 45, kbGrowth: 95 },
+    v.x, v.y + 1);
+  setState(f, 'idle');
+}
+
+function stepGrabbed(game, f, e) {
+  const g = f._grabber;
+  if (!g || g.state !== 'holding') { f._grabber = null; setState(f, 'idle'); return; }
+  // mash out: every attack/special/jump/shield press shaves 14 ticks
+  if (e.attackP || e.specialP || e.jumpP || e.shieldP) g._grabDur -= 14;
+}
+
+// release a grab from the defender's side (got hit / KO'd mid-grab)
+function releaseGrab(def) {
+  if (def._victim && def._victim.state === 'grabbed') {
+    def._victim._grabber = null;
+    setState(def._victim, 'idle');
+    def._victim = null;
+  }
+  if (def._grabber && def.state === 'grabbed') {
+    const g = def._grabber;
+    def._grabber = null;
+    if (g._victim === def) g._victim = null;
+    if (g.state === 'holding') setState(g, 'idle');
+  }
+}
+
+// ---- dodges ----
+function startRoll(f, dir) {
+  setState(f, 'roll');
+  f._rollDir = dir;
+  f.vx = 0;
+  sfx.whiff();
+}
+
+function stepRoll(game, f) {
+  const sf = f.stateFrame;
+  f.x += f._rollDir * (3.2 / 28); // 3.2u over 28 ticks, can pass behind
+  if (!f._plat) f.x = Math.max(STAGE.x0, Math.min(STAGE.x1, f.x)); // stop at edges
+  if (sf >= 4 && sf <= 20) f.invuln = 2; // intangible 4-20
+  physics(game, f);
+  if (sf >= 28) setState(f, 'idle');
+}
+
+function stepSpotdodge(game, f) {
+  const sf = f.stateFrame;
+  f.vx = 0;
+  if (sf >= 3 && sf <= 15) f.invuln = 2; // intangible 3-15, stationary
+  physics(game, f);
+  if (sf >= 20) setState(f, 'idle');
+}
+
+function startAirdodge(f) {
+  setState(f, 'airdodge');
+  f.vx *= 0.5; f.vy = Math.min(f.vy, 0.05);
+  sfx.whiff();
+}
+
+function stepAirdodge(game, f, e) {
+  const sf = f.stateFrame;
+  if (sf >= 4) {
+    // drift with the held direction at airSpeed*0.8 after the initial stall
+    const hdir = (e.right ? 1 : 0) - (e.left ? 1 : 0);
+    const tgt = hdir * f.airSpeed * 0.8;
+    const d = tgt - f.vx;
+    f.vx += Math.sign(d) * Math.min(Math.abs(d), 0.35);
+  }
+  if (sf >= 4 && sf <= 18) f.invuln = 2; // intangible 4-18
+  physics(game, f);
+  if (sf >= 26) { f.jumpsUsed = 1; setState(f, 'fall'); } // no double jump after
+}
+
+// ---- ledge game ----
+function grabLedge(game, f) {
+  const edgeX = f.x > 0 ? STAGE.x1 : STAGE.x0;
+  f.x = edgeX; f.y = -0.5; f.vx = 0; f.vy = 0;
+  f.onGround = false; f._plat = null;
+  f.jumpsUsed = 0;
+  f.invuln = 40;
+  f._canGrabLedge = false; // re-armed on land()
+  f.facing = edgeX > 0 ? -1 : 1; // face the stage
+  setState(f, 'ledge');
+}
+
+function ledgeEdgeX(f) {
+  return f.x > 0 ? STAGE.x1 : STAGE.x0;
+}
+
+function stepLedge(game, f, e) {
+  const sf = f.stateFrame;
+  if (sf >= 320) { // max hang -> forced normal getup
+    doLedgeGetup(game, f);
+    return;
+  }
+  const edgeX = ledgeEdgeX(f);
+  const inward = edgeX > 0 ? -1 : 1; // toward-stage direction
+  const heldDir = (e.right ? 1 : 0) - (e.left ? 1 : 0);
+  if (heldDir === inward) { doLedgeGetup(game, f); return; } // normal getup
+  if (e.attackP) { // ledge attack
+    f.x = edgeX + inward * 0.6; f.y = 0; f.onGround = true;
+    f.vx = 0; f.vy = 0;
+    setState(f, 'ledgeattack');
+    sfx.whiff();
+    return;
+  }
+  if (e.shieldP) { // ledge roll
+    f.x = edgeX + inward * 0.5; f.y = 0; f.onGround = true;
+    f.vx = 0; f.vy = 0;
+    f._rollDir = inward;
+    setState(f, 'ledgeroll');
+    sfx.whiff();
+    return;
+  }
+  if (e.jumpP) { // jump off the ledge
+    f.vy = f.jumpV * 0.92; f.jumpsUsed = 0;
+    f.onGround = false; f._plat = null;
+    setState(f, 'jump');
+    sfx.jump();
+  }
+}
+
+function doLedgeGetup(game, f) {
+  const edgeX = ledgeEdgeX(f);
+  const inward = edgeX > 0 ? -1 : 1;
+  f.x = edgeX + inward * 1.0; f.y = 0; f.onGround = true;
+  f.vx = 0; f.vy = 0;
+  f.invuln = 10;
+  setState(f, 'ledgegetup');
+}
+
+function stepLedgeAttack(game, f, foe) {
+  const sf = f.stateFrame;
+  // hitbox in front, active ticks 8-14
+  if (sf >= 8 && sf <= 14 && hittable(foe)) {
+    const hx = f.x + 0.7 * f.facing, hy = f.y + 0.9;
+    if (rectsOverlap(hx, hy, 0.9, 0.7, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+      applyHit(game,
+        { facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
+        foe, { dmg: 8, angle: 40, baseKB: 40, kbGrowth: 90 }, hx, hy);
+    }
+  }
+  f.vx *= 0.85;
+  physics(game, f);
+  if (sf >= 26) setState(f, 'idle');
+}
+
+function stepLedgeRoll(game, f) {
+  const sf = f.stateFrame;
+  f.x += f._rollDir * (3.0 / 30); // 3u inward over 30 ticks
+  if (!f._plat) f.x = Math.max(STAGE.x0, Math.min(STAGE.x1, f.x));
+  if (sf >= 4 && sf <= 22) f.invuln = 2; // intangible 4-22
+  physics(game, f);
+  if (sf >= 30) setState(f, 'idle');
+}
+
+// ---- jump-squat: 3 ticks, then full hop (jump held) or short hop (released) ----
+function stepSquat(game, f, e) {
+  f.vx *= 0.9;
+  physics(game, f);
+  if (f.stateFrame >= 3) {
+    const held = e.jump;
+    const full = f._squatAir ? f.djumpV : f.jumpV;
+    f.vy = held ? full : full * 0.55;
+    if (f._squatAir) f.jumpsUsed++;
+    else f.jumpsUsed = 0;
+    f.onGround = false; f._plat = null;
+    f._fastFalling = false;
+    setState(f, 'jump');
+    sfx.jump();
+  }
 }
 
 // ---------------------------------------------------------------- attacks
@@ -537,6 +983,7 @@ function startAttack(f, id) {
   f._lungeDone = false;
   f._fired = false;
   f._lifts = 0;
+  f._chargeMult = 1; // default; the charge release sets the real value after
   sfx.whiff();
 }
 
@@ -593,7 +1040,7 @@ function stepAttack(game, f, e, foe) {
     const hx = f.x + h.dx * f.facing, hy = f.y + h.dy;
     if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
       f._hitSet.add(foe);
-      applyHit(game, { facing: f.facing, theme: f.theme, kbClass: mv.kbClass }, foe, h, hx, hy);
+      applyHit(game, { facing: f.facing, theme: f.theme, kbClass: mv.kbClass, pow: f._chargeMult || 1 }, foe, h, hx, hy);
     }
   }
 
@@ -626,15 +1073,32 @@ function predictKO(def, lvx, lvy, hs) {
   return false;
 }
 
-// att = { facing, theme, kbClass } — a real fighter or a projectile's owner info
+// att = { facing, theme, kbClass, pow } — a real fighter or a projectile's
+// owner info. pow (default 1) is the v0.3 charged-smash multiplier, applied to
+// damage AND knockback after the kb formula.
 function applyHit(game, att, def, hit, hx, hy) {
   if (def.invuln > 0 || def.state === 'dead' || def.state === 'respawn') return;
   exitShieldMesh(def);
+  clearChargeFx(def); // getting hit cancels a charge (kills tone + glow)
+  releaseGrab(def);   // getting hit / thrown breaks any grab involvement
+
+  const pow = att.pow || 1;
+  const effDmg = hit.dmg * pow;
 
   // --- shielded ---
   if (def.state === 'shield' && def.onGround) {
-    def.shieldHP -= hit.dmg * 1.2;
-    def.vx = att.facing * (0.12 + hit.dmg * 0.008);
+    // v0.3 parry: shield raised within the last 3 ticks — no damage, no shield
+    // damage, both freeze 6 ticks, attacker pushed back, blue-white spark
+    if (game._tick - def._shieldStartTick <= 3) {
+      def.hitPause = 6;
+      const atkF = game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
+      if (atkF) { atkF.hitPause = 6; atkF.vx = -att.facing * 0.18; }
+      hitSpark(hx, hy, { primary: '#bfe9ff', secondary: '#ffffff' }, 0.8);
+      sfx.parry();
+      return;
+    }
+    def.shieldHP -= effDmg * 1.2;
+    def.vx = att.facing * (0.12 + effDmg * 0.008);
     def.vy = 0.1;
     sfx.shieldHit();
     hitSpark(hx, hy, att.theme, 0.25);
@@ -650,8 +1114,8 @@ function applyHit(game, att, def, hit, hx, hy) {
   }
 
   // --- clean hit ---
-  def.percent += hit.dmg;
-  const kb = knockback(def.percent, hit.dmg, def.weight, hit.baseKB, hit.kbGrowth);
+  def.percent += effDmg;
+  const kb = knockback(def.percent, effDmg, def.weight, hit.baseKB, hit.kbGrowth) * pow;
 
   // light DI: rotate the launch angle a touch toward the defender's held dir
   let ang = hit.angle;
@@ -670,7 +1134,7 @@ function applyHit(game, att, def, hit, hx, hy) {
   // freeze BOTH fighters ~26 ticks, punch the camera in on the victim with a
   // shake pulse, then release into the launch.
   const koBlow = def.stocks <= 1 && predictKO(def, lvx, lvy, def._hitstunDur);
-  const hp = koBlow ? 26 : Math.max(2, Math.round(3 + hit.dmg * 0.25));
+  const hp = koBlow ? 26 : Math.max(2, Math.round(3 + effDmg * 0.25));
   def.hitPause = hp;
   // attacker freeze: find the real fighter behind att when it's a fighter hit
   const atkF = game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
@@ -689,15 +1153,16 @@ function applyHit(game, att, def, hit, hx, hy) {
     game._shakeAmp = Math.min(0.30, 0.06 + kb * 0.0009);
   }
 
-  const power = Math.min(1, hit.dmg / 22);
+  const power = Math.min(1, effDmg / 22);
   hitSpark(hx, hy, att.theme, power);
   sfx.hit(power);
 }
 
 // ---------------------------------------------------------------- shield
 
-function enterShield(f) {
+function enterShield(game, f) {
   setState(f, 'shield');
+  f._shieldStartTick = game._tick; // v0.3: parry window anchor
   f.vx *= 0.5;
   if (!f._shieldMesh) {
     try { f._shieldMesh = shieldBubbleAttach(f); } catch (err) { f._shieldMesh = null; }
@@ -714,7 +1179,21 @@ function exitShieldMesh(f) {
 function stepShield(game, f, e) {
   if (!e.shield || !f.onGround) {
     exitShieldMesh(f);
-    setState(f, 'idle');
+    // v0.3 spot dodge: shield tapped (pressed and released within 8 ticks,
+    // no direction) on the ground -> intangible dodge in place
+    if (!e.shield && f.onGround && !e.left && !e.right &&
+        game._tick - f._lastShieldPress <= 8) {
+      setState(f, 'spotdodge');
+      sfx.whiff();
+    } else {
+      setState(f, 'idle');
+    }
+    return;
+  }
+  // v0.3: grab out of shield — attack pressed while shielding, on the ground
+  if (e.attackP && f.onGround) {
+    exitShieldMesh(f);
+    startGrab(game, f);
     return;
   }
   f.shieldHP -= 0.12;
@@ -777,6 +1256,8 @@ function checkBlast(game, f) {
     koBlast(bx, by, f.theme);
     sfx.ko();
     exitShieldMesh(f);
+    clearChargeFx(f); // v0.3: kill any charge tone/glow
+    releaseGrab(f);   // v0.3: a KO breaks grabs cleanly
     f.stocks--;
     if (f.stocks > 0) {
       f.x = 0; f.y = 6; f.vx = 0; f.vy = 0;
