@@ -11,6 +11,9 @@ import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js';
 import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData } from './roster.js';
 import { openLab } from './lab.js';
 import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js';
+import {
+  STAGES, createCampaignManager, loadProgress, recordClear,
+} from './campaign.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -85,14 +88,14 @@ function toast(msg, isError = false) {
 
 // ------------------------------------------------------------ screens
 
-const SCREENS = ['screen-title', 'screen-select', 'screen-pause', 'screen-results'];
+const SCREENS = ['screen-title', 'screen-select', 'screen-campaign', 'screen-pause', 'screen-results'];
 function show(id) {
   for (const s of SCREENS) $(s).classList.toggle('hidden', s !== id);
   if (!id) for (const s of SCREENS) $(s).classList.add('hidden');
 }
 function showHud(v) {
   $('hud').classList.toggle('hidden', !v);
-  if (!v) $('hud-countdown').classList.add('hidden');
+  if (!v) { $('hud-countdown').classList.add('hidden'); $('hud-extra').classList.add('hidden'); }
 }
 
 // ------------------------------------------------------------ fighter select
@@ -231,6 +234,125 @@ function openSelect(m) {
   });
 }
 
+// ------------------------------------------------------------ campaign
+// v0.10 CLASSIC MODE: 7-stage ladder/challenges/boss, 1P or 2P co-op.
+
+let campCoop = false;
+let campP1 = 'ronin', campP2 = 'volt';
+let campMgr = null, campIdx = 0, lastWasCampaign = false;
+
+function fmtTicks(t) {
+  const s = Math.floor(t / 60);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function campFighterRow(elId, cur, set) {
+  const el = $(elId);
+  el.innerHTML = '';
+  const ids = [...Object.keys(FIGHTER_DEFS).filter((d) => !FIGHTER_DEFS[d].custom),
+    ...Object.keys(FIGHTER_DEFS).filter((d) => FIGHTER_DEFS[d].custom)];
+  for (const d of ids) {
+    const b = document.createElement('button');
+    b.className = 'btn pick' + (d === cur ? ' sel' : '');
+    b.textContent = FIGHTER_DEFS[d].custom ? FIGHTER_DEFS[d].name : d.toUpperCase();
+    b.addEventListener('click', () => { sfx.uiMove(); set(d); openCampaign(); });
+    el.appendChild(b);
+  }
+}
+
+function openCampaign() {
+  const prog = loadProgress();
+  const list = $('campaign-stages');
+  list.innerHTML = '';
+  STAGES.forEach((st, i) => {
+    const unlocked = i <= prog.unlocked;
+    const d = document.createElement('div');
+    d.className = 'stage' + (unlocked ? '' : ' locked');
+    const best = prog.best[i];
+    d.innerHTML = `<div class="stage-num">${unlocked ? (i + 1) : '🔒'}</div>` +
+      `<div class="stage-body"><div class="stage-name">${st.name}</div>` +
+      `<div class="stage-sub">${st.sub}</div></div>` +
+      `<div class="stage-best">${best ? `${best.stocks} stocks · ${fmtTicks(best.time)}` : ''}</div>`;
+    if (unlocked) d.addEventListener('click', () => { sfx.select(); startCampaignStage(i); });
+    list.appendChild(d);
+  });
+  $('btn-coop1').classList.toggle('sel', !campCoop);
+  $('btn-coop2').classList.toggle('sel', campCoop);
+  $('camp-p2-wrap').classList.toggle('hidden', !campCoop);
+  campFighterRow('camp-p1-cards', campP1, (d) => { campP1 = d; });
+  if (campCoop) campFighterRow('camp-p2-cards', campP2, (d) => { campP2 = d; });
+  show('screen-campaign');
+}
+
+function startCampaignStage(idx, p1 = null, p2 = null, coop = null) {
+  if (p1) campP1 = p1;
+  if (p2) campP2 = p2;
+  if (coop !== null) campCoop = coop;
+  // a custom slot may have been deleted while we were away
+  if (!FIGHTER_DEFS[campP1]) campP1 = 'ronin';
+  if (!FIGHTER_DEFS[campP2]) campP2 = 'volt';
+  campIdx = idx;
+  campMgr = createCampaignManager(idx, {
+    p1def: campP1, p2def: campP2, coop: campCoop,
+    announce: (m) => toast(m),
+  });
+  destroyGame();
+  show(null);
+  showHud(true);
+  lastWasCampaign = true;
+  game = createGame({
+    slots: campMgr.slots(),
+    scene,
+    matchTime: campMgr.matchTime(),
+    onTick: (g) => campMgr.onTick(g),
+    onKO: (g, f) => campMgr.onKO(g, f),
+    onTimeUp: (g) => campMgr.onTimeUp(g),
+    onEnd: (result) => campaignEnd(result),
+    onPause: (paused) => { if (paused) show('screen-pause'); else show(null); },
+    onHud: renderHud,
+  });
+  attachCustoms(game);
+  game._hudExtra = () => campMgr.hudExtra(game);
+  // stage intro splash
+  const st = STAGES[idx];
+  $('ci-num').textContent = `STAGE ${idx + 1} / ${STAGES.length}`;
+  $('ci-name').textContent = st.name;
+  $('ci-sub').textContent = st.sub + (campCoop ? ' · CO-OP' : '');
+  $('campaign-intro').classList.remove('hidden');
+  setTimeout(() => $('campaign-intro').classList.add('hidden'), 2400);
+  if (DEBUG) window.__sv = {
+    game, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount },
+    startSlots: (list, m = 'cpu') => startFightWithSlots(list, m),
+    startCampaign: (i, c = false, a = 'ronin', b = 'volt') => startCampaignStage(i, a, b, c),
+  };
+}
+
+function campaignEnd(result) {
+  showHud(false);
+  const r = campMgr.resolveEnd(game, result);
+  const st = STAGES[campIdx];
+  const final = campIdx === STAGES.length - 1;
+  if (r.clear) {
+    const prog = recordClear(campIdx, r.score || { stocks: 0, time: 0 });
+    const isBest = prog.best[campIdx] && r.score &&
+      prog.best[campIdx].stocks === r.score.stocks && prog.best[campIdx].time === r.score.time;
+    $('results-winner').textContent = final ? 'CAMPAIGN COMPLETE!' : 'STAGE CLEAR!';
+    $('results-sub').textContent =
+      `${st.name} cleared — ${r.score ? r.score.stocks : 0} stock(s) left` +
+      (isBest ? ' · NEW BEST!' : '');
+    $('btn-next-stage').classList.toggle('hidden', final);
+    $('btn-rematch').textContent = 'REPLAY STAGE';
+    sfx.select();
+  } else {
+    $('results-winner').textContent = 'STAGE FAILED';
+    $('results-sub').textContent = `${st.name} — ${r.why || 'try again'}`;
+    $('btn-next-stage').classList.add('hidden');
+    $('btn-rematch').textContent = 'TRY AGAIN';
+    sfx.select();
+  }
+  show('screen-results');
+}
+
 // ------------------------------------------------------------ game lifecycle
 
 function renderHud(s) {
@@ -273,12 +395,29 @@ function renderHud(s) {
   } else {
     cd.classList.add('hidden');
   }
+  // v0.10: campaign HUD extras — KO FEST counter, boss HP bar
+  const ex = $('hud-extra');
+  if (s.extra && (s.extra.kind === 'kofest' || s.extra.kind === 'boss')) {
+    ex.classList.remove('hidden');
+    if (s.extra.kind === 'kofest') {
+      ex.innerHTML = `<div class="kofest">KO <b>${s.extra.count}</b> / ${s.extra.target}</div>`;
+    } else {
+      const pct = Math.max(0, Math.min(100, Math.round(s.extra.pct / 1.6)));
+      const ph = Math.max(1, s.extra.phase || 1);
+      ex.innerHTML = `<div class="bossbar"><div class="bossname">${s.extra.name} — PHASE ${ph}</div>` +
+        `<div class="bosstrack"><div class="bossfill" style="width:${pct}%"></div>` +
+        `<div class="bosspip" style="left:37.5%"></div><div class="bosspip" style="left:75%"></div></div></div>`;
+    }
+  } else {
+    ex.classList.add('hidden');
+  }
 }
 
 function startFightWithSlots(slotList, m, isDemo = false) {
   destroyGame();
   show(null);
   showHud(true);
+  lastWasCampaign = false;
   // snapshot for rematch (defs may be deleted from the roster later)
   lastDefs = { slots: slotList.map((s) => ({ ...s })), m };
   game = createGame({
@@ -362,6 +501,14 @@ function quitToTitle() {
 
 $('btn-1p').addEventListener('click', () => { sfx.select(); openSelect('cpu'); });
 $('btn-2p').addEventListener('click', () => { sfx.select(); openSelect('versus'); });
+$('btn-campaign').addEventListener('click', () => { sfx.select(); openCampaign(); });
+$('btn-camp-back').addEventListener('click', () => { sfx.uiMove(); show('screen-title'); });
+$('btn-coop1').addEventListener('click', () => { sfx.uiMove(); campCoop = false; openCampaign(); });
+$('btn-coop2').addEventListener('click', () => { sfx.uiMove(); campCoop = true; openCampaign(); });
+$('btn-next-stage').addEventListener('click', () => {
+  sfx.select();
+  if (campIdx < STAGES.length - 1) startCampaignStage(campIdx + 1);
+});
 $('btn-back').addEventListener('click', () => { sfx.uiMove(); show('screen-title'); });
 $('btn-start').addEventListener('click', () => {
   sfx.select();
@@ -373,6 +520,7 @@ $('btn-resume').addEventListener('click', () => { sfx.select(); if (game) game.s
 $('btn-quit').addEventListener('click', () => { sfx.uiMove(); quitToTitle(); });
 $('btn-rematch').addEventListener('click', () => {
   sfx.select();
+  if (lastWasCampaign) { startCampaignStage(campIdx); return; }
   if (lastDefs) startFightWithSlots(lastDefs.slots, lastDefs.m);
 });
 $('btn-results-title').addEventListener('click', () => { sfx.uiMove(); quitToTitle(); });
@@ -480,4 +628,5 @@ if (DEMO) {
 if (DEBUG && !window.__sv) window.__sv = {
   get game() { return game; }, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount },
   startSlots: (list, m = 'cpu') => startFightWithSlots(list, m),
+  startCampaign: (i, c = false, a = 'ronin', b = 'volt') => startCampaignStage(i, a, b, c),
 };

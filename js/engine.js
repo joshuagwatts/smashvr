@@ -102,7 +102,18 @@ function thinkAI(f, foe, a) {
 
   const dx = foe.x - f.x, dy = foe.y - f.y;
   const adx = Math.abs(dx), ady = Math.abs(dy);
-  if (adx > 0.7) h[dx > 0 ? 'right' : 'left'] = true;
+  // v0.10: AI personalities for campaign "weird enemies" — probability table
+  // plus movement style. No behavior fork: same thinkAI, tuned dials.
+  const PERS = {
+    normal:  { atk: 0.34, smash: 0.48, special: 0.60, shield: 0.66, poke: 0.10 },
+    rusher:  { atk: 0.52, smash: 0.66, special: 0.72, shield: 0.74, poke: 0.16 },
+    camper:  { atk: 0.20, smash: 0.28, special: 0.60, shield: 0.70, poke: 0.38 },
+    spammer: { atk: 0.18, smash: 0.26, special: 0.62, shield: 0.66, poke: 0.34 },
+  };
+  const P = PERS[f._aiPersonality] || PERS.normal;
+  if (P === PERS.camper && adx < 4.5 && adx > 0.7) {
+    h[dx > 0 ? 'left' : 'right'] = true; // keep your distance
+  } else if (adx > 0.7) h[dx > 0 ? 'right' : 'left'] = true;
   const r = Math.random();
 
   if (adx < 2.6 && ady < 2.6) {
@@ -114,16 +125,16 @@ function thinkAI(f, foe, a) {
       return h;
     }
     if (f.onGround) {
-      if (r < 0.34) {
+      if (r < P.atk) {
         a.tap.attack = true;
         if (dy > 1.4) h.up = true; else if (dy < -1) h.down = true;
-      } else if (r < 0.48) {
+      } else if (r < P.smash) {
         a.tap.smash = true;
         if (dy > 1.4) h.up = true; else if (dy < -1) h.down = true;
-      } else if (r < 0.60) {
+      } else if (r < P.special) {
         a.tap.special = true;
         if (dy > 2) h.up = true;
-      } else if (r < 0.66) {
+      } else if (r < P.shield) {
         h.shield = true; a.shieldT = 15;
       }
     } else {
@@ -135,7 +146,7 @@ function thinkAI(f, foe, a) {
   } else {
     // approach
     if (dy > 2.2 && f.onGround && r < 0.5) a.tap.jump = true;
-    if (adx < 5 && adx > 2.5 && r < 0.10) a.tap.special = true; // projectile poke
+    if (adx < 7 && adx > 2.5 && r < P.poke) a.tap.special = true; // projectile poke
     // don't chase off the edge (AI decides every 12 ticks; at ~0.15 u/tick
     // it can drift ~1.8u between decisions, so turn around well inside x=7)
     if (f.onGround && Math.abs(f.x) > 5.0 && Math.sign(dx) === Math.sign(f.x)) {
@@ -158,6 +169,35 @@ function aiControl(f, foe) {
   return h;
 }
 
+// v0.10: per-slot combat modifiers for campaign "weird enemies".
+// { scale, speedMul, weightMul, kbDealtMul, kbTakenMul, stocks, name,
+//   ai: 'normal'|'rusher'|'camper'|'spammer' }. No engine fork — the record
+// is tweaked right after createFighter.
+function applySlotMods(f, mods) {
+  f._modScale = 1;
+  f._hurtW = HURT_W; f._hurtH = HURT_H;
+  f._kbDealtMul = 1; f._kbTakenMul = 1;
+  f._aiPersonality = 'normal';
+  f._superArmor = false; // set per-tick by the boss brain (campaign.js)
+  f._isBoss = false;
+  if (!mods) return;
+  if (mods.scale) {
+    f._modScale = mods.scale;
+    f._hurtW = HURT_W * mods.scale; f._hurtH = HURT_H * mods.scale;
+  }
+  if (mods.speedMul) {
+    f.runSpeed *= mods.speedMul; f.airSpeed *= mods.speedMul;
+    f.jumpV *= Math.sqrt(mods.speedMul); f.djumpV *= Math.sqrt(mods.speedMul);
+  }
+  if (mods.weightMul) f.weight *= mods.weightMul;
+  if (mods.kbDealtMul) f._kbDealtMul = mods.kbDealtMul;
+  if (mods.kbTakenMul) f._kbTakenMul = mods.kbTakenMul;
+  if (mods.stocks) f.stocks = mods.stocks;
+  if (mods.name) f.name = mods.name;
+  if (mods.ai) f._aiPersonality = mods.ai;
+  if (mods.boss) f._isBoss = true;
+}
+
 // ---------------------------------------------------------------- game
 
 export function createGame(opts) {
@@ -169,6 +209,12 @@ export function createGame(opts) {
     // 'p1'|'p2'|'cpu'|'closed', team: 'red'|'blue'|null }. When absent, the
     // legacy 2-fighter path is built (bit-identical behavior).
     slots = null,
+    // v0.10: campaign hooks — matchTime (seconds, 0 = default), per-tick
+    // hook, stock-loss hook, and a time-up override.
+    matchTime = 0,
+    onTick = null,
+    onKO = null,
+    onTimeUp = null,
   } = opts;
 
   initFX(scene);
@@ -194,6 +240,7 @@ export function createGame(opts) {
     if (s.ctrl === 'closed' || fighters.length >= 8) continue;
     const f = createFighter(s.def);
     f.slot = si; f.ctrl = demo ? 'cpu' : s.ctrl; f.team = s.team || null;
+    f._slotCfg = s; // v0.10: retained so mods apply in the init pass below
     f._portColor = '#' + new THREE.Color(
       f.team ? TEAM_COLORS[f.team] : PORT_COLORS[si % PORT_COLORS.length]
     ).getHexString();
@@ -201,10 +248,16 @@ export function createGame(opts) {
     fighters.push(f);
   }
 
-  fighters.forEach((f, i) => {
+  // v0.10: per-fighter init extracted so addFighter() (mid-match spawns for
+  // campaign spawners) reuses the exact same setup.
+  const initGameFighter = (f, i) => {
     // v0.9: legacy spawns are exactly -3/+3 facing in; N-fighter spreads
     // across the stage grouped by team (reds left, blues right, FFA spread).
-    if (legacy) {
+    // v0.10: an explicit cfg x/y (spawner drops) wins over the spread.
+    if (f._slotCfg && f._slotCfg.x !== undefined) {
+      f.x = f._slotCfg.x; f.y = f._slotCfg.y || 0;
+      f.facing = f.x >= 0 ? -1 : 1;
+    } else if (legacy) {
       f.x = i === 0 ? -3 : 3;
       f.facing = i === 0 ? 1 : -1;
     } else {
@@ -217,6 +270,8 @@ export function createGame(opts) {
     }
     f.y = 0; f.vx = 0; f.vy = 0;
     f.percent = 0; f.stocks = START_STOCKS;
+    // v0.10: slot mods apply AFTER the defaults above (stocks/name override).
+    applySlotMods(f, f._slotCfg && f._slotCfg.mods);
     f.state = 'idle'; f.stateFrame = 0;
     f.moveId = null; f.moveFrame = 0;
     f.onGround = true; f.jumpsUsed = 0;
@@ -260,7 +315,8 @@ export function createGame(opts) {
     scene.add(ring);
     f._portRing = ring;
     syncRoot(f);
-  });
+  };
+  fighters.forEach((f, i) => initGameFighter(f, i));
 
   const game = {
     state: 'countdown',           // countdown -> fight -> done
@@ -270,8 +326,14 @@ export function createGame(opts) {
     _acc: 0,
     _tick: 0,                    // v0.3: global fight tick counter (tech/parry windows)
     _cd: 100,                    // countdown ticks (~1.7s of 3-2-1)
-    _timer: MATCH_TIME * 60,
+    _timer: (matchTime || MATCH_TIME) * 60, // v0.10: campaign overrides
     _human: [blankHold(), blankHold()],
+    // v0.10: campaign hooks + mid-match spawner state
+    _onTick: onTick,
+    _onKO: onKO,
+    _onTimeUp: onTimeUp,
+    _hudExtra: null,             // fn(game) -> hud extra payload (main.js sets)
+    _isDemo: demo,
     // feel pass v0.2: impact shake + KO-blow cinematic state
     _shakeT: 0, _shakeDur: 1, _shakeAmp: 0,
     _koFx: null,                // { t, dur, x, y } while the KO freeze plays
@@ -342,12 +404,48 @@ export function createGame(opts) {
       if (this._vignT > 0) this._vignT--;
       setVignette(this._vignT > 0 ? this._vignT / 22 : 0);
       this.pushHud();
+      // v0.10: campaign manager tick (spawners, boss brain, clear/fail).
+      if (this._onTick) this._onTick(this);
     },
 
     setPaused(v) {
       if (this.state !== 'fight') return;
       this.paused = v;
       onPause(v);
+    },
+
+    // v0.10: mid-match spawn (campaign KO FEST / SURVIVAL spawners). The new
+    // fighter drops from the sky in 'respawn' with brief invuln — same entry
+    // as a stock-loss respawn.
+    addFighter(cfg) {
+      const f = createFighter(cfg.def);
+      f.slot = fighters.length;
+      f.ctrl = this._isDemo ? 'cpu' : (cfg.ctrl || 'cpu');
+      f.team = cfg.team || null;
+      f._portColor = '#' + new THREE.Color(
+        f.team ? TEAM_COLORS[f.team] : PORT_COLORS[f.slot % PORT_COLORS.length]
+      ).getHexString();
+      f._slotCfg = cfg;
+      fighters.push(f);
+      initGameFighter(f, f.slot);
+      f.x = cfg.x !== undefined ? cfg.x : (Math.random() * 6 - 3);
+      f.y = 7; f.vx = 0; f.vy = 0;
+      f.percent = 0; f.invuln = 90; f.onGround = false;
+      setState(f, 'respawn');
+      syncRoot(f);
+      return f;
+    },
+
+    // v0.10: boss shockwave stomp — a ground-hugging projectile each way.
+    spawnShockwave(f, dir) {
+      const mv = {
+        kbClass: 'strong',
+        projectile: {
+          speed: 7, dmg: 10, angle: 35, baseKB: 40, kbGrowth: 80,
+          w: 0.9, h: 0.9, life: 70, gravity: 0,
+        },
+      };
+      return spawnProjectile(f, mv, f.x + dir * 1.2, 0.5, dir);
     },
 
     pushHud() {
@@ -365,6 +463,8 @@ export function createGame(opts) {
         phase: this.state,
         countdown: this.state === 'countdown' ? Math.max(1, Math.ceil(this._cd / 34)) : 0,
         paused: this.paused,
+        // v0.10: campaign HUD extras (KO counter, boss bar) via game._hudExtra
+        extra: this._hudExtra ? this._hudExtra() : null,
       });
     },
 
@@ -375,6 +475,8 @@ export function createGame(opts) {
     },
 
     timeUp() {
+      // v0.10: campaign survival overrides the default stocks/percent scoring.
+      if (this._onTimeUp) { this._onTimeUp(this); return; }
       // v0.9: group by team (or solo slot in FFA); winning group = most total
       // stocks, tiebreak lowest total percent. Legacy 1v1 reduces to the old
       // stocks*10000 - percent formula exactly.
@@ -451,8 +553,8 @@ function hoverBob(f) {
 
 function syncRoot(f) {
   f.root.position.set(f.x, f.y + hoverBob(f), 0);
-  f.root.scale.x = f.facing; // face the model toward f.facing
-  f.root.scale.y = 1; f.root.scale.z = 1;
+  // v0.10: scale mods (giant/tiny campaign enemies) compose with facing.
+  f.root.scale.set(f._modScale * f.facing, f._modScale, f._modScale);
   if (f._portRing) f._portRing.position.set(f.x, 0.02, 0); // v0.3 colors: ring tracks fighter x/z
 }
 
@@ -900,7 +1002,7 @@ function stepGrab(game, f, e, foes) {
     const gx = f.x + f.facing * 1.3, gy = f.y + 0.6;
     for (const foe of foes) {
       if (!hittable(foe)) continue;
-      if (rectsOverlap(gx, gy, 1.0, 1.2, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+      if (rectsOverlap(gx, gy, 1.0, 1.2, foe.x, foe.y + foe._hurtH / 2, foe._hurtW, foe._hurtH)) {
         f._grabConnected = true;
         f._victim = foe; foe._grabber = f;
         exitShieldMesh(foe);
@@ -1100,13 +1202,13 @@ function stepLedgeAttack(game, f, foes) {
   // v0.9: hits every opponent in range.
   if (sf >= 8 && sf <= 14) {
     f.root.position.set(f.x, f.y + hoverBob(f), 0);
-    f.root.scale.x = f.facing; f.root.scale.y = 1; f.root.scale.z = 1;
+    f.root.scale.set(f._modScale * f.facing, f._modScale, f._modScale); // v0.10 scale mods
     poseStrikeSkeleton(f, ledgeAttackEuler());
     const tip = strikeTip(f, 'handR', { dx: 0.7 });
     const hx = tip ? tip.x : f.x + 0.7 * f.facing, hy = tip ? tip.y : f.y + 0.9;
     for (const foe of foes) {
       if (!hittable(foe)) continue;
-      if (rectsOverlap(hx, hy, 0.9, 0.7, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+      if (rectsOverlap(hx, hy, 0.9, 0.7, foe.x, foe.y + foe._hurtH / 2, foe._hurtW, foe._hurtH)) {
         applyHit(game,
           { fighter: f, facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
           foe, { dmg: 8, angle: 40, baseKB: 40, kbGrowth: 90 }, hx, hy);
@@ -1235,7 +1337,7 @@ function stepAttack(game, f, e, foes) {
     // later, in the visual tick), pose the analytic attack pose (identical to
     // what the visual shows — no blend during attacks), read the tip.
     f.root.position.set(f.x, f.y + hoverBob(f), 0);
-    f.root.scale.x = f.facing; f.root.scale.y = 1; f.root.scale.z = 1;
+    f.root.scale.set(f._modScale * f.facing, f._modScale, f._modScale); // v0.10 scale mods
     poseStrikeSkeleton(f, attackPose(mv, mf));
     const tip = strikeTip(f, STRIKE_LIMB[f.moveId], h);
     // Bone unavailable (shouldn't happen on procedural rigs; VRM optionals):
@@ -1247,7 +1349,7 @@ function stepAttack(game, f, e, foes) {
     for (const foe of foes) {
       if (foe.state === 'dead' || foe.state === 'respawn' || foe.invuln > 0) continue;
       if (f._hitSet.has(foe)) continue;
-      if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+      if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + foe._hurtH / 2, foe._hurtW, foe._hurtH)) {
         f._hitSet.add(foe);
         applyHit(game, { fighter: f, facing: f.facing, theme: f.theme, kbClass: mv.kbClass, pow: f._chargeMult || 1 }, foe, h, hx, hy);
       }
@@ -1335,7 +1437,20 @@ function applyHit(game, att, def, hit, hx, hy) {
 
   // --- clean hit ---
   def.percent += effDmg;
-  const kb = knockback(def.percent, effDmg, def.weight, hit.baseKB, hit.kbGrowth) * pow;
+
+  // v0.10: super armor (boss) — damage sticks, but no launch and no hitstun.
+  if (def._superArmor) {
+    def.hitPause = Math.max(def.hitPause, 3);
+    setHitFlash(def, 4);
+    hitSpark(hx, hy, att.theme, 0.3);
+    damageNumber(def.x, def.y + 1.9, Math.round(effDmg), false);
+    sfx.hit(0.3);
+    return;
+  }
+
+  // v0.10: campaign KB multipliers (giant hits harder, tiny flies farther).
+  const kb = knockback(def.percent, effDmg, def.weight, hit.baseKB, hit.kbGrowth)
+    * pow * (att.fighter && att.fighter._kbDealtMul || 1) * (def._kbTakenMul || 1);
 
   // light DI: rotate the launch angle a touch toward the defender's held dir
   let ang = hit.angle;
@@ -1458,7 +1573,7 @@ function stepProjectiles(game) {
     for (const f of game.fighters) {
       if (f.state === 'dead' || f.state === 'respawn' || f.invuln > 0) continue;
       if (p.owner && !canHit(p.owner, f)) continue;
-      if (rectsOverlap(p.x, p.y, p.w, p.h, f.x, f.y + HURT_H / 2, HURT_W, HURT_H)) {
+      if (rectsOverlap(p.x, p.y, p.w, p.h, f.x, f.y + f._hurtH / 2, f._hurtW, f._hurtH)) {
         p.dead = true;
         applyHit(game,
           { fighter: p.owner, facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null), kbClass: p.kbClass || 'weak' },
@@ -1496,6 +1611,7 @@ function checkBlast(game, f) {
     clearChargeFx(f); // v0.3: kill any charge tone/glow
     releaseGrab(f);   // v0.3: a KO breaks grabs cleanly
     f.stocks--;
+    if (game._onKO) game._onKO(game, f); // v0.10: campaign KO counters/spawners
     if (f.stocks > 0) {
       // v0.9: N-fighter respawns spread out so 8 fighters don't stack.
       const n = game.fighters.length;

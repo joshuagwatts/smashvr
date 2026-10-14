@@ -28,6 +28,7 @@
     <div class="btn-col">
       <button id="btn-1p" class="btn big">1P vs CPU</button>
       <button id="btn-2p" class="btn big">2P Versus</button>
+      <button id="btn-campaign" class="btn big camp">CLASSIC MODE</button>
       <button id="btn-lab" class="btn">Fighter Lab</button>
       <label class="btn file-btn">Import character (.vrm / .glb / .gltf)
         <input type="file" id="vrm-file" accept=".vrm,.glb,.gltf" hidden>
@@ -69,6 +70,29 @@
   </div>
 </div>
 
+<!-- ============ CAMPAIGN (CLASSIC MODE) ============ -->
+<div id="screen-campaign" class="screen hidden">
+  <div class="panel wide">
+    <h2>CLASSIC MODE</h2>
+    <p class="subtitle">7 stages · weird enemies · challenges · ends on a boss</p>
+    <div class="btn-row coop-row">
+      <button id="btn-coop1" class="btn sel">1P</button>
+      <button id="btn-coop2" class="btn">2P CO-OP</button>
+    </div>
+    <h3 class="sel-label">P1 fighter</h3>
+    <div class="cards small" id="camp-p1-cards"></div>
+    <div id="camp-p2-wrap" class="hidden">
+      <h3 class="sel-label">P2 fighter</h3>
+      <div class="cards small" id="camp-p2-cards"></div>
+    </div>
+    <h3 class="sel-label">Stages</h3>
+    <div id="campaign-stages"></div>
+    <div class="btn-row">
+      <button id="btn-camp-back" class="btn ghost">&#8592; Back</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ HUD ============ -->
 <div id="hud" class="hidden">
   <div class="hud-side left" id="hud-left"></div>
@@ -78,7 +102,15 @@
   </div>
   <div class="hud-side right" id="hud-right"></div>
 </div>
+<div id="hud-extra" class="hidden"></div>
 <div id="hud-countdown" class="hidden"></div>
+
+<!-- ============ CAMPAIGN STAGE INTRO ============ -->
+<div id="campaign-intro" class="hidden">
+  <div id="ci-num">STAGE 1 / 7</div>
+  <div id="ci-name">WARMUP</div>
+  <div id="ci-sub"></div>
+</div>
 
 <!-- ============ PAUSE ============ -->
 <div id="screen-pause" class="screen hidden">
@@ -97,6 +129,7 @@
     <h2 id="results-winner">RONIN WINS</h2>
     <p class="subtitle" id="results-sub"></p>
     <div class="btn-col">
+      <button id="btn-next-stage" class="btn big hidden">NEXT STAGE &#8594;</button>
       <button id="btn-rematch" class="btn big">Rematch</button>
       <button id="btn-results-title" class="btn ghost">Quit to title</button>
     </div>

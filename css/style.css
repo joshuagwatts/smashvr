@@ -197,3 +197,78 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
   transition: opacity 0.3s;
 }
 #toast.error { border-color: var(--danger); box-shadow: 0 0 24px rgba(255, 77, 109, 0.4); }
+
+/* ---------- v0.10 campaign ---------- */
+.btn.camp { background: linear-gradient(135deg, #b3541e, #e2a12e); }
+.btn.camp:hover { box-shadow: 0 0 24px rgba(226, 161, 46, 0.6); }
+.coop-row { margin: 4px 0 6px; }
+.coop-row .btn.sel { border-color: var(--accent2); box-shadow: 0 0 18px rgba(0, 229, 255, 0.35); }
+.cards.small { flex-wrap: wrap; gap: 8px; }
+.btn.pick { padding: 8px 14px; font-size: 13px; }
+.btn.pick.sel { border-color: var(--accent2); box-shadow: 0 0 14px rgba(0, 229, 255, 0.35); }
+#campaign-stages { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 4px; }
+.stage {
+  display: flex; align-items: center; gap: 14px; text-align: left;
+  border: 2px solid var(--line); border-radius: 12px; padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.35); cursor: pointer;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.stage:hover:not(.locked) { border-color: var(--accent2); transform: translateX(3px); }
+.stage.locked { opacity: 0.45; cursor: default; }
+.stage-num {
+  font-size: 26px; font-weight: 900; min-width: 44px; text-align: center;
+  color: var(--accent2);
+}
+.stage.locked .stage-num { color: var(--dim); }
+.stage-body { flex: 1; }
+.stage-name { font-weight: 900; letter-spacing: 3px; font-size: 17px; }
+.stage-sub { color: var(--dim); font-size: 13px; margin-top: 2px; }
+.stage-best { color: var(--accent2); font-size: 13px; font-weight: 700; white-space: nowrap; }
+
+/* stage intro splash */
+#campaign-intro {
+  position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(5, 7, 18, 0.55);
+  animation: ci-in 0.35s ease-out;
+}
+#campaign-intro.hidden { display: none; }
+#ci-num { letter-spacing: 6px; color: var(--dim); font-size: 15px; }
+#ci-name {
+  font-size: 64px; font-weight: 900; letter-spacing: 8px; margin: 6px 0;
+  background: linear-gradient(135deg, #e2a12e, #ff5e3a);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 0 44px rgba(226, 161, 46, 0.4);
+}
+#ci-sub { color: var(--txt); font-size: 16px; letter-spacing: 1px; }
+@keyframes ci-in { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: scale(1); } }
+
+/* HUD extras: KO counter + boss bar */
+#hud-extra {
+  position: fixed; top: 76px; left: 50%; transform: translateX(-50%);
+  z-index: 40; pointer-events: none; text-align: center;
+}
+#hud-extra.hidden { display: none; }
+.kofest {
+  font-size: 26px; font-weight: 900; letter-spacing: 3px; color: #ffd166;
+  text-shadow: 0 0 18px rgba(255, 209, 102, 0.5);
+}
+.kofest b { font-size: 34px; }
+.bossbar { width: min(60vw, 520px); }
+.bossname {
+  font-weight: 900; letter-spacing: 4px; font-size: 15px; color: #c4b5fd;
+  text-shadow: 0 0 16px rgba(139, 92, 246, 0.6); margin-bottom: 4px;
+}
+.bosstrack {
+  position: relative; height: 16px; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55); border: 1px solid #8b5cf6;
+  overflow: hidden;
+}
+.bossfill {
+  height: 100%; border-radius: 8px;
+  background: linear-gradient(90deg, #8b5cf6, #e879f9);
+  transition: width 0.2s;
+}
+.bosspip {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: #0b0e1a;
+}

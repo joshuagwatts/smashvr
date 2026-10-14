@@ -986,3 +986,60 @@ up to 8 fighters.
   screens.
 - `?demo=1` still runs 1v1 CPU-vs-CPU; no demo4v4 flag.
 - Audio never heard headless; CPU AI decision quality unevaluated (standing gaps).
+
+## v0.10 campaign — CLASSIC MODE (2026-10-14)
+Joshua: "i always love a single player tournament like smash bros with weird
+enemies challenges and closes on a boss fight... and also a way to run through
+that with your friends."
+
+### Design
+- `js/campaign.js` (new): 7 stages, `createCampaignManager(stageIdx, {p1def,
+  p2def, coop})`, localStorage progress (`smashvr_campaign_v1`: unlocked,
+  best {stocks,time}, completed). Stages:
+  1. WARMUP — 1v1 vs CPU. 2. TINY TERRORS — 1v2 tiny fast VOLTs (0.7x, 1.6x
+  speed, rusher). 3. KO FEST — knock 10 weak 1-stock RONINs off (continuous
+  spawns, HUD counter). 4. ODD COUPLE — giant RONIN (1.6x, 1.9x weight) +
+  camper VOLT. 5. SURVIVAL — 3:00 endless weaklings, live to 0:00. 6. LAST
+  STAND — 2v3 (CPU ally, or 2nd human in co-op). 7. WISP KING — 2.5x WISP boss.
+- Weird enemies via slot `mods` (no engine fork): scale, speedMul, weightMul,
+  kbDealtMul/TakenMul, stocks, name, ai personality. Engine: per-fighter
+  hurtbox (`_hurtW/_hurtH`), scale-composing facing, `game.addFighter()` for
+  mid-match spawns, `matchTime`/`onTick`/`onKO`/`onTimeUp` hooks.
+- AI personalities (thinkAI dials): rusher (aggressive), camper (keeps 4.5u,
+  projectile pokes), spammer (special-heavy).
+- Boss: 3 HP phases at 60%/120% (announce toasts, shockwave burst on change),
+  phase 2 adds shockwave stomps (ground projectiles both ways), phase 3 =
+  spammer + 1.25x speed + permanent super armor (phases 1-2 armor only
+  mid-smash). Boss HP bar with phase pips on HUD. Super armor: damage sticks,
+  no launch/hitstun.
+- Co-op: P1+P2 humans share clear/fail; campaign screen has 1P/2P toggle +
+  fighter pickers (built-ins + customs). Stage intro splash, results → NEXT
+  STAGE / REPLAY / TRY AGAIN. Versus mode untouched.
+
+### Verification
+- Node `test/campaign.mjs` (new, 40 checks): slot builders all 7 stages +
+  co-op variants; mods (scale/speed/weight/KB/stocks/name/ai, hurtbox scale);
+  addFighter; KO FEST all-CPU sim → 10 KOs → clear; SURVIVAL timer → clear;
+  boss phases at 60/120%, phase-3 spammer+armor; ladder resolveEnd; progress
+  unlock/bests; hudExtra payloads. ALL PASS.
+- All 14 prior suites green: 14/14 logic, kb_scaling, angle_bands, 18/18
+  rebalance, 11/11 feel_v02, 40/40 feel_v03, 22/22 feel_v04, 73/73 autorig,
+  20/20 bodytype, 8/8 vrm_rest, 418/418 hitbox_sync @ 0.25u, 9/9 anim_phases,
+  team_battle, playtest 19/19.
+- Browser `verify/campaign_check.mjs` 11/11: campaign screen (7 stages,
+  locks, coop toggle, pickers), stage 1 1v1, intro splash, KO FEST (4
+  fighters + counter HUD), BOSS (2.5x scale, phase-3 armor+spammer, HP bar
+  HUD), co-op p1+p2 red vs cpu blue — zero console/page errors. Screenshots:
+  /tmp/camp-screen.png, /tmp/camp-stage1.png, /tmp/camp-kofest.png,
+  /tmp/camp-boss.png.
+- Perf: boss + 3 adds (5 fighters) avg tick **0.07ms** (budget 16.7ms).
+
+### Honest gaps
+- Boss bar / KO counter overlapped the match timer at top-center in the first
+  pass — moved below it (y=76px); needs a real-display sanity check.
+- Boss fight balance (KO % vs 2.4x weight) untuned vs a human.
+- KO FEST/SURVIVAL difficulty untested vs humans (CPU sims only).
+- Campaign P2 picker defaults to VOLT; no per-stage fighter memory.
+- Boss shockwaves can hit during player respawn invuln? No — projectiles
+  skip invuln fighters (existing guard).
+- Audio never heard headless; CPU AI decision quality unevaluated (standing).
