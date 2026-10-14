@@ -914,10 +914,14 @@ rig the character for the game."
   angle_bands pass, kb_scaling pass, rebalance 18/18, anim_phases 9/9 PASS,
   hitbox_sync 418 @ 0.25u, 0 failures.
 
-### Browser verification — PENDING (needs a live browser; subagent has none)
-- Import an A-pose GLB via the picker → expect "A-pose detected" toast +
-  import-status line; Lab → POSE: A badge; idle screenshot of the A-pose custom
-  fighter.
+### Browser verification — DONE (2026-10-14, headless Chromium, synthetic A-45° GLB)
+- Import A-45° GLB via title picker → toast "APOSE45 added to roster — A-pose
+  detected — rigged for A-pose"; import-status "APOSE45: Biped (auto-detected),
+  A-pose detected — rigged for A-pose".
+- Lab on the custom slot → `POSE: A` badge.
+- Fight (APOSE45 vs VOLT CPU): `f._isVRM`, `rig.group.visible === false`, zero
+  page/console errors; idle render clean — capsule character, natural arm pose,
+  no double-rig, no T-snap. Screenshot /tmp/apose-fight.png.
 
 ### Honest gaps
 - T-pose synthetic measures ~4° droop (rigger's 0.80H shoulder-height assumption
@@ -926,3 +930,59 @@ rig the character for the game."
 - Real .vrm files are never pose-classified (artist-rigged; the game treats
   their rest as neutral via rest×delta) — the toast says so honestly.
 - Audio never heard headless; CPU AI quality unevaluated (standing gaps).
+
+## v0.9 teams + N fighters (2026-10-14)
+Foundation for 4v4s, campaign co-op, and netplay. Engine generalized from 2 to
+up to 8 fighters.
+
+### Design
+- `createGame({ slots })`: each slot `{ def, ctrl: 'p1'|'p2'|'cpu'|'closed', team: 'red'|'blue'|null }`.
+  No `slots` opt = legacy 2-fighter path, bit-identical (spawns -3/+3, same camera,
+  same win logic). 8-slot cap. Only one human P1/P2 across slots (setting it
+  clears it elsewhere).
+- Teams: `f.team`; friendly fire OFF via `canHit()` (same non-null team never
+  connects) + defense-in-depth guard in `applyHit` (`_ffHits` violation counter).
+  FFA = null team. Team port rings + HUD in team colors; FFA cycles 8 port colors.
+- Combat generalized: `stepFighter(game, f, cur, foes)` — attacks/grabs/ledge
+  attacks/projectiles iterate all opponents; AI (`nearestFoe`) targets the
+  nearest living opponent; `att.fighter` replaces the fragile theme-based
+  attacker lookup (hitstop/parry freeze).
+- Win: `checkWin` — last team / fighter standing (per-fighter stocks; team out
+  when all its fighters are dead). `timeUp` scores by team (total stocks, then
+  total percent). Results screen shows "RED TEAM WINS" etc.
+- Camera: legacy 1v1 formula preserved exactly for 2-fighter FFA; N-fighter path
+  fits all living fighters (zoom-out by max pairwise spread, clamped).
+- Select screen: 8 slot cards (click selects; CTRL badge cycles controller;
+  team dot cycles none→red→blue; interacting with a slot selects it) + one
+  fighter-card pool assigning to the selected slot. START shows fighter count,
+  requires 2+.
+- HUD: per-fighter chips (name · ctrl, %, stocks) grouped red-left / blue-right,
+  team headers in team mode; 1v1 FFA reproduces the old P1-left/P2-right look.
+- Mirror-match alt theme: 2nd+ occurrence of a def gets altTheme (was P2-only).
+- Debug hook: `__sv.startSlots(slots)` (?debug=1) for tests.
+
+### Verification
+- Node `test/team_battle.mjs` (new, uses `test/_harness.mjs` — window/document/
+  AudioContext stubs + root `node_modules/three` shim): legacy spawns/teams/
+  ctrls identical; 4v4 red-vs-blue all-CPU completes (~3000 ticks), winning team
+  takes all, **zero friendly-fire hits**; FFA 4-way completes with one survivor;
+  perf **0.27ms/tick** with 8 fighters (budget 16.7ms).
+- All 14 node suites green: 14/14 logic, kb_scaling, angle_bands, 18/18 rebalance,
+  11/11 feel_v02, 40/40 feel_v03, 22/22 feel_v04, 73/73 autorig, 20/20 bodytype,
+  8/8 vrm_rest, 418/418 hitbox_sync @ 0.25u, 9/9 anim_phases, team_battle;
+  browser: 19/19 playtest, 27/27 color_v03.
+- Browser `verify/team4v4.mjs` (12/12): 8 slots render, controller/team cycling,
+  4v4 all-CPU team battle via startSlots — 8 fighters in scene, 8 HUD chips,
+  battle progresses (stocks lost, damage dealt), zero friendly-fire, zero errors.
+  Screenshots: verify/team4v4.png, verify/team4v4_late.png, verify/select_slots.png.
+- 1v1 regression: playtest 19/19 — jab connects, gameplay clean, HUD live.
+
+### Honest gaps
+- Ledge is single-occupancy by position only — two fighters can hang the same
+  ledge (visual overlap, no crash).
+- 8-CPU FFA/team battles are chaos-balanced, not tuned — AI has no team
+  coordination (no focus-fire, no holding positions).
+- HUD chips compact after 2 per side; 4v4 chips are readable but dense on small
+  screens.
+- `?demo=1` still runs 1v1 CPU-vs-CPU; no demo4v4 flag.
+- Audio never heard headless; CPU AI decision quality unevaluated (standing gaps).

@@ -77,6 +77,7 @@ function readHuman(p) {
 
 function thinkAI(f, foe, a) {
   const h = blankHold();
+  if (!foe) return h; // v0.9: no living opponent (game is about to end)
 
   // v0.3: hanging on the ledge — take the normal getup (hold toward stage)
   if (f.state === 'ledge') {
@@ -164,6 +165,10 @@ export function createGame(opts) {
     mode = 'cpu', p1def = 'ronin', p2def = 'volt', scene,
     onEnd = () => {}, onPause = () => {}, onHud = () => {},
     demo = false,
+    // v0.9: slot-based roster — up to 8 entries. Each: { def, ctrl:
+    // 'p1'|'p2'|'cpu'|'closed', team: 'red'|'blue'|null }. When absent, the
+    // legacy 2-fighter path is built (bit-identical behavior).
+    slots = null,
   } = opts;
 
   initFX(scene);
@@ -173,13 +178,44 @@ export function createGame(opts) {
     50, window.innerWidth / window.innerHeight, 0.1, 200);
   camera.position.set(0, 3.5, 16);
 
-  const fighters = [createFighter(p1def), createFighter(p2def)];
-  const isCPU = (i) => demo || (mode === 'cpu' && i === 1);
+  // v0.9: build the fighter list from slots. Legacy (no slots): exactly the
+  // old 2-fighter setup — P1 human + P2/CPU.
+  const slotDefs = slots || [
+    { def: p1def, ctrl: 'p1', team: null },
+    { def: p2def, ctrl: mode === 'cpu' ? 'cpu' : 'p2', team: null },
+  ];
+  const legacy = !slots;
+  // v0.9: FFA port colors cycle per slot; team mode uses team colors.
+  const PORT_COLORS = [0xff3b30, 0x0a84ff, 0xffcc00, 0x30d158, 0xbf5af2, 0xff9f0a, 0x64d2ff, 0xff375f];
+  const TEAM_COLORS = { red: 0xff3b30, blue: 0x0a84ff };
+  const fighters = [];
+  let si = 0;
+  for (const s of slotDefs) {
+    if (s.ctrl === 'closed' || fighters.length >= 8) continue;
+    const f = createFighter(s.def);
+    f.slot = si; f.ctrl = demo ? 'cpu' : s.ctrl; f.team = s.team || null;
+    f._portColor = '#' + new THREE.Color(
+      f.team ? TEAM_COLORS[f.team] : PORT_COLORS[si % PORT_COLORS.length]
+    ).getHexString();
+    si++;
+    fighters.push(f);
+  }
 
   fighters.forEach((f, i) => {
-    const x = i === 0 ? -3 : 3;
-    f.x = x; f.y = 0; f.vx = 0; f.vy = 0;
-    f.facing = i === 0 ? 1 : -1;
+    // v0.9: legacy spawns are exactly -3/+3 facing in; N-fighter spreads
+    // across the stage grouped by team (reds left, blues right, FFA spread).
+    if (legacy) {
+      f.x = i === 0 ? -3 : 3;
+      f.facing = i === 0 ? 1 : -1;
+    } else {
+      const rank = f.team === 'red' ? -1 : f.team === 'blue' ? 1 : 0;
+      const group = fighters.filter((o) => (o.team === 'red' ? -1 : o.team === 'blue' ? 1 : 0) === rank);
+      const k = group.indexOf(f);
+      const cx = rank * 3.5;
+      f.x = group.length === 1 ? cx : cx - 1.5 + 3 * (k / (group.length - 1));
+      f.facing = f.x >= 0 ? -1 : 1;
+    }
+    f.y = 0; f.vx = 0; f.vy = 0;
     f.percent = 0; f.stocks = START_STOCKS;
     f.state = 'idle'; f.stateFrame = 0;
     f.moveId = null; f.moveFrame = 0;
@@ -211,7 +247,7 @@ export function createGame(opts) {
     // v0.3 colors: port-colored ground ring (Smash convention: P1 red, P2 blue).
     // Flat RingGeometry at y~0.02, depthWrite off so it never z-fights the stage.
     // Rendered in all modes (cpu / versus / demo).
-    const portColor = i === 0 ? 0xff3b30 : 0x0a84ff;
+    const portColor = f.team ? TEAM_COLORS[f.team] : PORT_COLORS[f.slot % PORT_COLORS.length];
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.55, 0.75, 48),
       new THREE.MeshBasicMaterial({
@@ -284,9 +320,11 @@ export function createGame(opts) {
       if (--this._timer <= 0) { this.timeUp(); return; }
       this._tick++; // v0.3: advance the global tick counter every fight tick
 
-      const [f1, f2] = fighters;
-      stepFighter(this, f1, isCPU(0) ? aiControl(f1, f2) : this._human[0], f2);
-      stepFighter(this, f2, isCPU(1) ? aiControl(f2, f1) : this._human[1], f1);
+      // v0.9: N fighters — each steps against all of its valid opponents.
+      for (const f of fighters) {
+        const foes = opponentsOf(this, f);
+        stepFighter(this, f, inputFor(this, f, foes), foes);
+      }
       stepProjectiles(this);
 
       for (const f of fighters) checkBlast(this, f);
@@ -316,9 +354,13 @@ export function createGame(opts) {
       const snap = (f) => ({
         name: f.name, percent: Math.floor(f.percent), stocks: f.stocks,
         shield: f.shieldHP / SHIELD_MAX,
+        team: f.team, ctrl: f.ctrl, slot: f.slot, color: f._portColor,
       });
+      // v0.9: HUD is a fighter array (main.js builds chips); p1/p2 kept for
+      // the legacy 2-fighter shape.
       onHud({
-        p1: snap(fighters[0]), p2: snap(fighters[1]),
+        fighters: fighters.map(snap),
+        p1: snap(fighters[0]), p2: fighters[1] ? snap(fighters[1]) : null,
         time: Math.max(0, Math.ceil(this._timer / 60)),
         phase: this.state,
         countdown: this.state === 'countdown' ? Math.max(1, Math.ceil(this._cd / 34)) : 0,
@@ -333,9 +375,24 @@ export function createGame(opts) {
     },
 
     timeUp() {
-      const [a, b] = fighters;
-      const score = (f) => f.stocks * 10000 - f.percent;
-      const winner = score(a) === score(b) ? a : (score(a) > score(b) ? a : b);
+      // v0.9: group by team (or solo slot in FFA); winning group = most total
+      // stocks, tiebreak lowest total percent. Legacy 1v1 reduces to the old
+      // stocks*10000 - percent formula exactly.
+      const groups = new Map();
+      for (const f of fighters) {
+        const k = f.team || ('solo' + f.slot);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(f);
+      }
+      let best = null, bestScore = -Infinity, bestKey = null;
+      for (const [k, ms] of groups) {
+        const score = ms.reduce((s, x) => s + x.stocks, 0) * 10000
+          - ms.reduce((s, x) => s + x.percent, 0);
+        if (score > bestScore) { bestScore = score; best = ms; bestKey = k; }
+      }
+      const winner = (typeof bestKey === 'string' && bestKey.startsWith('solo'))
+        ? best[0]
+        : { name: String(bestKey).toUpperCase() + ' TEAM', team: bestKey };
       this.finish({ winner, reason: 'time' });
     },
 
@@ -400,11 +457,26 @@ function syncRoot(f) {
 }
 
 function updateCamera(game) {
-  const [a, b] = game.fighters;
-  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  // v0.9: legacy 1v1 (2 fighters, no teams) keeps the exact old framing;
+  // N-fighter / team games fit everyone.
+  const fs = game.fighters;
+  let mx, my, dist;
+  if (fs.length === 2 && !fs[0].team && !fs[1].team) {
+    const [a, b] = fs;
+    mx = (a.x + b.x) / 2; my = (a.y + b.y) / 2;
+    dist = Math.abs(a.x - b.x);
+  } else {
+    const alive = fs.filter((f) => f.state !== 'dead');
+    const xs = alive.map((f) => f.x), ys = alive.map((f) => f.y);
+    const mnx = Math.min(...xs), mxx = Math.max(...xs);
+    const mny = Math.min(...ys), mxy = Math.max(...ys);
+    mx = (mnx + mxx) / 2; my = (mny + mxy) / 2;
+    dist = Math.max(mxx - mnx, (mxy - mny) * 1.4);
+  }
   let cx = Math.max(-4, Math.min(4, mx)) * 0.6;
-  const dist = Math.abs(a.x - b.x);
   let z = 16 + Math.max(0, Math.min(10, dist - 8)) * 0.5;
+  // v0.9: 8 fighters can spread wider than 1v1 — allow more zoom-out.
+  if (fs.length > 2) z = 16 + Math.max(0, Math.min(16, dist - 8)) * 0.6;
   let cy = 3.5 + (my - 2) * 0.15;
   let lookY = 2.2;
 
@@ -452,7 +524,7 @@ function updateCamera(game) {
 
 // ---------------------------------------------------------------- per-fighter step
 
-function stepFighter(game, f, cur, foe) {
+function stepFighter(game, f, cur, foes) {
   const e = edges(f._prevH, cur);
   f._prevH = cur;
 
@@ -485,7 +557,7 @@ function stepFighter(game, f, cur, foe) {
       physics(game, f);
       return;
     case 'attack':
-      stepAttack(game, f, e, foe);
+      stepAttack(game, f, e, foes);
       return;
     case 'helpless':
       // S64-like: you can still air-drift after your up-B (needed for recovery)
@@ -504,10 +576,10 @@ function stepFighter(game, f, cur, foe) {
       stepCharge(game, f, e);
       return;
     case 'grab':
-      stepGrab(game, f, e, foe);
+      stepGrab(game, f, e, foes);
       return;
     case 'holding':
-      stepHolding(game, f, e, foe);
+      stepHolding(game, f, e, foes);
       return;
     case 'grabbed':
       stepGrabbed(game, f, e);
@@ -532,7 +604,7 @@ function stepFighter(game, f, cur, foe) {
       if (f.stateFrame >= 22) setState(f, 'idle');
       return;
     case 'ledgeattack':
-      stepLedgeAttack(game, f, foe);
+      stepLedgeAttack(game, f, foes);
       return;
     case 'ledgeroll':
       stepLedgeRoll(game, f);
@@ -763,25 +835,86 @@ function hittable(foe) {
   return foe.state !== 'dead' && foe.state !== 'respawn' && foe.invuln <= 0;
 }
 
-function stepGrab(game, f, e, foe) {
+// ---------------------------------------------------------------- v0.9 teams + N fighters
+
+// Friendly fire is OFF in team mode (classic rules): same non-null team can
+// never hit each other. FFA (null team) hits everyone except self.
+function canHit(att, def) {
+  if (!def || att === def) return false;
+  if (att.team && def.team && att.team === def.team) return false;
+  return true;
+}
+
+// All valid opponents for f (team-filtered, self excluded). Dead/invuln are
+// left in — per-hit checks (hittable) already handle them, exactly as before.
+function opponentsOf(game, f) {
+  return game.fighters.filter((o) => canHit(f, o));
+}
+
+// AI aim: nearest living opponent.
+function nearestFoe(f, foes) {
+  let best = null, bd = Infinity;
+  for (const o of foes) {
+    if (o.state === 'dead') continue;
+    const d = Math.abs(o.x - f.x) + Math.abs(o.y - f.y);
+    if (d < bd) { bd = d; best = o; }
+  }
+  return best;
+}
+
+function inputFor(game, f, foes) {
+  if (f.ctrl === 'cpu') {
+    const foe = nearestFoe(f, foes);
+    if (!foe) return blankHold();
+    return aiControl(f, foe);
+  }
+  return game._human[f.ctrl === 'p1' ? 0 : 1];
+}
+
+// Last team / fighter standing. Teams group by team id; FFA fighters each
+// form their own group. Legacy 1v1: the surviving fighter wins, as before.
+function checkWin(game) {
+  const alive = game.fighters.filter((x) => x.stocks > 0);
+  const groups = new Map();
+  for (const x of alive) {
+    const k = x.team || ('solo' + x.slot);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(x);
+  }
+  if (groups.size <= 1) {
+    const entry = [...groups.entries()][0];
+    if (!entry) return;
+    const [k, ms] = entry;
+    const winner = (typeof k === 'string' && k.startsWith('solo'))
+      ? ms[0]
+      : { name: String(k).toUpperCase() + ' TEAM', team: k };
+    if (winner) game.finish({ winner, reason: 'stocks' });
+  }
+}
+
+function stepGrab(game, f, e, foes) {
   const sf = f.stateFrame;
-  // active grab box ticks 4-9: in front, range ~1.3u
-  if (sf >= 4 && sf <= 9 && !f._grabConnected && hittable(foe)) {
+  // active grab box ticks 4-9: in front, range ~1.3u. v0.9: checks every
+  // opponent, grabs the first hittable one in range.
+  if (sf >= 4 && sf <= 9 && !f._grabConnected) {
     const gx = f.x + f.facing * 1.3, gy = f.y + 0.6;
-    if (rectsOverlap(gx, gy, 1.0, 1.2, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
-      f._grabConnected = true;
-      f._victim = foe; foe._grabber = f;
-      exitShieldMesh(foe);
-      clearChargeFx(foe); // a grabbed charger loses the charge (tone + glow)
-      foe.vx = 0; foe.vy = 0; foe.hitPause = 0;
-      setState(foe, 'grabbed');
-      setState(f, 'holding');
-      // mash-out clock: 100 ticks + ~0.9 per percent point on the victim
-      f._grabDur = Math.round(100 + foe.percent * 0.9);
-      f._pummelCD = 0;
-      hitSpark(gx, gy, f.theme, 0.3);
-      sfx.hit(0.25);
-      return;
+    for (const foe of foes) {
+      if (!hittable(foe)) continue;
+      if (rectsOverlap(gx, gy, 1.0, 1.2, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+        f._grabConnected = true;
+        f._victim = foe; foe._grabber = f;
+        exitShieldMesh(foe);
+        clearChargeFx(foe); // a grabbed charger loses the charge (tone + glow)
+        foe.vx = 0; foe.vy = 0; foe.hitPause = 0;
+        setState(foe, 'grabbed');
+        setState(f, 'holding');
+        // mash-out clock: 100 ticks + ~0.9 per percent point on the victim
+        f._grabDur = Math.round(100 + foe.percent * 0.9);
+        f._pummelCD = 0;
+        hitSpark(gx, gy, f.theme, 0.3);
+        sfx.hit(0.25);
+        return;
+      }
     }
   }
   f.vx *= 0.8; // whiff is rooted and punishable
@@ -829,7 +962,7 @@ function doThrow(game, f, v, which) {
   const T = THROWS[which];
   f._victim = null; v._grabber = null;
   applyHit(game,
-    { facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
+    { fighter: f, facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
     v, { dmg: T.dmg, angle: T.angle, baseKB: 45, kbGrowth: 95 },
     v.x, v.y + 1);
   setState(f, 'idle');
@@ -960,20 +1093,24 @@ function doLedgeGetup(game, f) {
   setState(f, 'ledgegetup');
 }
 
-function stepLedgeAttack(game, f, foe) {
+function stepLedgeAttack(game, f, foes) {
   const sf = f.stateFrame;
   // hitbox in front, active ticks 8-14 — v0.7: skeleton-driven from the
   // getup-attack pose (same euler dict the locomotion system shows).
-  if (sf >= 8 && sf <= 14 && hittable(foe)) {
+  // v0.9: hits every opponent in range.
+  if (sf >= 8 && sf <= 14) {
     f.root.position.set(f.x, f.y + hoverBob(f), 0);
     f.root.scale.x = f.facing; f.root.scale.y = 1; f.root.scale.z = 1;
     poseStrikeSkeleton(f, ledgeAttackEuler());
     const tip = strikeTip(f, 'handR', { dx: 0.7 });
     const hx = tip ? tip.x : f.x + 0.7 * f.facing, hy = tip ? tip.y : f.y + 0.9;
-    if (rectsOverlap(hx, hy, 0.9, 0.7, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
-      applyHit(game,
-        { facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
-        foe, { dmg: 8, angle: 40, baseKB: 40, kbGrowth: 90 }, hx, hy);
+    for (const foe of foes) {
+      if (!hittable(foe)) continue;
+      if (rectsOverlap(hx, hy, 0.9, 0.7, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+        applyHit(game,
+          { fighter: f, facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
+          foe, { dmg: 8, angle: 40, baseKB: 40, kbGrowth: 90 }, hx, hy);
+      }
     }
   }
   f.vx *= 0.85;
@@ -1072,7 +1209,7 @@ function fireSpecial(f, mv) {
   }
 }
 
-function stepAttack(game, f, e, foe) {
+function stepAttack(game, f, e, foes) {
   const mv = f.moves[f.moveId];
   if (!mv) { endAttack(f); return; }
   f.moveFrame++;
@@ -1093,8 +1230,6 @@ function stepAttack(game, f, e, foe) {
 
   for (const h of mv.hits) {
     if (mf < h.from || mf > h.to) continue;
-    if (foe.state === 'dead' || foe.state === 'respawn' || foe.invuln > 0) continue;
-    if (f._hitSet.has(foe)) continue;
     // v0.7: skeleton-driven hitboxes — the striking limb's tip IS the hitbox.
     // Sync the root transform to this tick's physics (syncRoot normally runs
     // later, in the visual tick), pose the analytic attack pose (identical to
@@ -1107,9 +1242,15 @@ function stepAttack(game, f, e, foe) {
     // fall back to the design anchor.
     const hx = tip ? tip.x : f.x + h.dx * f.facing;
     const hy = tip ? tip.y : f.y + h.dy;
-    if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
-      f._hitSet.add(foe);
-      applyHit(game, { facing: f.facing, theme: f.theme, kbClass: mv.kbClass, pow: f._chargeMult || 1 }, foe, h, hx, hy);
+    // v0.9: one hitbox can catch several opponents (never teammates, never
+    // twice per swing — _hitSet is per-fighter as before).
+    for (const foe of foes) {
+      if (foe.state === 'dead' || foe.state === 'respawn' || foe.invuln > 0) continue;
+      if (f._hitSet.has(foe)) continue;
+      if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
+        f._hitSet.add(foe);
+        applyHit(game, { fighter: f, facing: f.facing, theme: f.theme, kbClass: mv.kbClass, pow: f._chargeMult || 1 }, foe, h, hx, hy);
+      }
     }
   }
 
@@ -1144,11 +1285,18 @@ function predictKO(def, lvx, lvy, hs) {
   return false;
 }
 
-// att = { facing, theme, kbClass, pow } — a real fighter or a projectile's
-// owner info. pow (default 1) is the v0.3 charged-smash multiplier, applied to
-// damage AND knockback after the kb formula.
+// att = { fighter?, facing, theme, kbClass, pow } — a real fighter or a
+// projectile's owner info. pow (default 1) is the v0.3 charged-smash
+// multiplier, applied to damage AND knockback after the kb formula.
+// v0.9: att.fighter carries the real attacker (no more theme-based lookup);
+// the friendly-fire guard here is defense-in-depth — canHit already filters
+// every call site. _ffHits counts violations for the team_battle test.
 function applyHit(game, att, def, hit, hx, hy) {
   if (def.invuln > 0 || def.state === 'dead' || def.state === 'respawn') return;
+  if (att.fighter && !canHit(att.fighter, def)) {
+    game._ffHits = (game._ffHits || 0) + 1;
+    return;
+  }
   exitShieldMesh(def);
   clearChargeFx(def); // getting hit cancels a charge (kills tone + glow)
   releaseGrab(def);   // getting hit / thrown breaks any grab involvement
@@ -1162,7 +1310,8 @@ function applyHit(game, att, def, hit, hx, hy) {
     // damage, both freeze 6 ticks, attacker pushed back, blue-white spark
     if (game._tick - def._shieldStartTick <= 3) {
       def.hitPause = 6;
-      const atkF = game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
+      const atkF = att.fighter && att.fighter.state === 'attack' ? att.fighter
+        : game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
       if (atkF) { atkF.hitPause = 6; atkF.vx = -att.facing * 0.18; }
       hitSpark(hx, hy, { primary: '#bfe9ff', secondary: '#ffffff' }, 0.8);
       sfx.parry();
@@ -1210,7 +1359,10 @@ function applyHit(game, att, def, hit, hx, hy) {
   const hp = koBlow ? 26 : Math.min(8, Math.max(3, Math.round(3 + effDmg * 0.3)));
   def.hitPause = hp;
   // attacker freeze: find the real fighter behind att when it's a fighter hit
-  const atkF = game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
+  // (v0.9: att.fighter is set at every fighter call site; theme-find is the
+  // fallback for projectiles whose owner record is stale).
+  const atkF = att.fighter && att.fighter.state === 'attack' ? att.fighter
+    : game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
   if (atkF) atkF.hitPause = hp;
   if (koBlow) {
     game._koFx = { t: 0, dur: 46, x: def.x, y: def.y };
@@ -1296,30 +1448,33 @@ function stepShield(game, f, e) {
 function stepProjectiles(game) {
   const projs = updateProjectiles(TICK);
   if (!projs) return;
-  const [f1, f2] = game.fighters;
 
   for (const p of projs) {
     if (p.dead) continue;
     if (p.x < -BLAST.x - 1 || p.x > BLAST.x + 1 || p.y < BLAST.bottom - 1 || p.y > BLAST.top + 1) {
       p.dead = true; continue;
     }
-    for (const f of [f1, f2]) {
-      if (f === p.owner || f.state === 'dead' || f.state === 'respawn' || f.invuln > 0) continue;
+    // v0.9: check every fighter — never the owner, never a teammate.
+    for (const f of game.fighters) {
+      if (f.state === 'dead' || f.state === 'respawn' || f.invuln > 0) continue;
+      if (p.owner && !canHit(p.owner, f)) continue;
       if (rectsOverlap(p.x, p.y, p.w, p.h, f.x, f.y + HURT_H / 2, HURT_W, HURT_H)) {
         p.dead = true;
         applyHit(game,
-          { facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null), kbClass: p.kbClass || 'weak' },
+          { fighter: p.owner, facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null), kbClass: p.kbClass || 'weak' },
           f, { dmg: p.dmg, angle: p.angle, baseKB: p.baseKB, kbGrowth: p.kbGrowth }, p.x, p.y);
         break;
       }
     }
   }
 
-  // projectile vs projectile — both pop
+  // projectile vs projectile — both pop. v0.9: same-team projectiles pass
+  // through each other (no friendly fire).
   for (let i = 0; i < projs.length; i++) {
     for (let j = i + 1; j < projs.length; j++) {
       const a = projs[i], b = projs[j];
       if (a.dead || b.dead || a.owner === b.owner) continue;
+      if (a.owner && b.owner && !canHit(a.owner, b.owner)) continue;
       if (rectsOverlap(a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h)) {
         a.dead = b.dead = true;
         hitSpark((a.x + b.x) / 2, (a.y + b.y) / 2, a.theme || b.theme, 0.4);
@@ -1342,16 +1497,17 @@ function checkBlast(game, f) {
     releaseGrab(f);   // v0.3: a KO breaks grabs cleanly
     f.stocks--;
     if (f.stocks > 0) {
-      f.x = 0; f.y = 6; f.vx = 0; f.vy = 0;
+      // v0.9: N-fighter respawns spread out so 8 fighters don't stack.
+      const n = game.fighters.length;
+      f.x = n > 2 ? (f.slot - (n - 1) / 2) * 1.2 : 0;
+      f.y = 6; f.vx = 0; f.vy = 0;
       f.percent = 0; f.invuln = 120; f.onGround = false;
       f.shieldHP = SHIELD_MAX; f.hitPause = 0;
       f.moveId = null;
       setState(f, 'respawn');
     } else {
       setState(f, 'dead');
-      const [a, b] = game.fighters;
-      const other = f === a ? b : a;
-      if (other.stocks > 0) game.finish({ winner: other, reason: 'stocks' });
+      checkWin(game); // v0.9: last team / fighter standing
     }
   }
 }

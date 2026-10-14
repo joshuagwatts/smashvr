@@ -57,12 +57,11 @@
 
 <!-- ============ FIGHTER SELECT ============ -->
 <div id="screen-select" class="screen hidden">
-  <div class="panel">
+  <div class="panel wide">
     <h2 id="select-title">Choose your fighter</h2>
-    <h3 class="sel-label">P1 <span id="p1-mode-tag"></span></h3>
-    <div class="cards" id="p1-cards"></div>
-    <h3 class="sel-label" id="p2-label">CPU</h3>
-    <div class="cards" id="p2-cards"></div>
+    <div id="slot-strip"></div>
+    <div class="sel-hint">Click a slot to select it · <b>CTRL</b> cycles controller · <b>●</b> cycles team · fighter cards assign to the selected slot</div>
+    <div class="cards" id="fighter-cards"></div>
     <div class="btn-row">
       <button id="btn-back" class="btn ghost">&#8592; Back</button>
       <button id="btn-start" class="btn big">START FIGHT</button>
@@ -72,20 +71,12 @@
 
 <!-- ============ HUD ============ -->
 <div id="hud" class="hidden">
-  <div class="hud-side left">
-    <div class="hud-name" id="hud-p1-name">P1</div>
-    <div class="hud-pct" id="hud-p1-pct">0%</div>
-    <div class="hud-stocks" id="hud-p1-stocks"></div>
-  </div>
+  <div class="hud-side left" id="hud-left"></div>
   <div class="hud-center">
     <div class="hud-timer" id="hud-timer">5:00</div>
     <div class="hud-pause-hint">Esc pause</div>
   </div>
-  <div class="hud-side right">
-    <div class="hud-name" id="hud-p2-name">P2</div>
-    <div class="hud-pct" id="hud-p2-pct">0%</div>
-    <div class="hud-stocks" id="hud-p2-stocks"></div>
-  </div>
+  <div class="hud-side right" id="hud-right"></div>
 </div>
 <div id="hud-countdown" class="hidden"></div>
 

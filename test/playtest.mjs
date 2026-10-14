@@ -54,8 +54,9 @@ try {
   // --- fighter select ---
   await page.click('#btn-1p');
   await page.waitForFunction(() => !document.getElementById('screen-select').classList.contains('hidden'), { timeout: 10000 });
-  const cards = await page.locator('.fcard').count();
-  check('fighter select cards rendered', cards === 6, `${cards} cards`);
+  const cards = await page.locator('#fighter-cards .fcard').count();
+  const slots = await page.locator('#slot-strip .slot').count();
+  check('fighter select cards rendered', cards >= 3 && slots === 8, `${cards} cards, ${slots} slots`);
   await page.screenshot({ path: '/home/hatch/workspace/smashvrm/verify/select.png' });
 
   // --- start 1P vs CPU ---
@@ -119,7 +120,7 @@ try {
   check('fight screenshot taken', true);
 
   // --- HUD live ---
-  const hudPct = await ev(`() => document.getElementById('hud-p1-pct').textContent`);
+  const hudPct = await ev(`() => document.querySelector('#hud-left .hchip .hud-pct').textContent`);
   check('HUD percent element updates', /%/.test(hudPct), hudPct);
 
   // --- exit fight: robust to the match having ended during gameplay ---

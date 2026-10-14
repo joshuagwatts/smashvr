@@ -29,12 +29,12 @@ await page.goto('file:///tmp/smashvrm-bootstrap.html', { waitUntil: 'domcontentl
 await page.click('#btn-1p');
 await page.waitForFunction(() => !document.getElementById('screen-select').classList.contains('hidden'), { timeout: 10000 });
 
-// ---- select WISP for P1 ----
-await page.click('.fcard[data-def="wisp"][data-group="1"]');
+// ---- select WISP for slot 1 (selected by default) ----
+await page.click('#fighter-cards .fcard[data-def="wisp"]');
 await page.waitForTimeout(300);
-const sel = await ev(`() => document.querySelector('.fcard[data-def="wisp"][data-group="1"]').classList.contains('sel')`);
+const sel = await ev(`() => document.querySelector('#fighter-cards .fcard[data-def="wisp"]').classList.contains('sel')`);
 check('wisp card selectable for P1', sel);
-const cardTag = await ev(`() => document.querySelector('.fcard[data-def="wisp"][data-group="1"] .fclass').textContent`);
+const cardTag = await ev(`() => document.querySelector('#fighter-cards .fcard[data-def="wisp"] .fclass').textContent`);
 check('wisp card shows FLOATER tag', /FLOATER/.test(cardTag), cardTag);
 
 await page.click('#btn-start');

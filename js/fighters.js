@@ -89,6 +89,12 @@ export function createFighter(defId) {
     rig,
     vrm: null,
 
+    // v0.9: multiplayer identity — engine sets these from the slot config.
+    team: null,   // 'red' | 'blue' | null (FFA)
+    ctrl: 'cpu',  // 'p1' | 'p2' | 'cpu'
+    slot: 0,
+    _portColor: '#ff3b30',
+
     // engine state
     x: 0, y: 0, vx: 0, vy: 0,
     facing: 1,

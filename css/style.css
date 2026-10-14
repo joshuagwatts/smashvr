@@ -119,6 +119,37 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
   padding: 0 4px; white-space: nowrap;
 }
 
+/* ---------- v0.9 slot strip ---------- */
+.panel.wide { width: min(96vw, 1100px); }
+#slot-strip {
+  display: flex; gap: 8px; justify-content: center; margin: 10px 0 4px;
+  flex-wrap: nowrap;
+}
+.slot {
+  flex: 1; min-width: 0; max-width: 130px; cursor: pointer;
+  border: 2px solid var(--line); border-radius: 10px;
+  padding: 8px 6px; background: rgba(0, 0, 0, 0.35);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  transition: border-color 0.1s;
+}
+.slot:hover { border-color: var(--dim); }
+.slot.sel { border-color: var(--accent2); box-shadow: 0 0 14px rgba(0, 229, 255, 0.3); }
+.slot.closed { opacity: 0.45; }
+.slot-name { font-size: 11px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.slot-ctrl {
+  font-size: 11px; font-weight: 800; letter-spacing: 1px; cursor: pointer;
+  background: #232c55; color: var(--txt); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 10px; min-width: 52px;
+}
+.slot-team {
+  width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+  background: #2a2f45; border: 2px solid var(--line); padding: 0;
+}
+.slot-team.team-red { background: #ff3b30; border-color: #ff3b30; }
+.slot-team.team-blue { background: #0a84ff; border-color: #0a84ff; }
+.sel-hint { color: var(--dim); font-size: 11px; letter-spacing: 1px; margin: 6px 0 10px; }
+.sel-hint b { color: var(--txt); }
+
 /* ---------- HUD ---------- */
 #hud {
   position: fixed; top: 0; left: 0; right: 0; z-index: 10;
@@ -126,11 +157,19 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
   padding: 14px 26px; pointer-events: none;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
-.hud-side { min-width: 180px; }
-.hud-side.right { text-align: right; }
+.hud-side { min-width: 180px; max-width: 34vw; display: flex; flex-direction: column; gap: 8px; }
+.hud-side.right { text-align: right; align-items: flex-end; }
+.hud-side.left { align-items: flex-start; }
+.hchip { border-left: 3px solid var(--dim); padding-left: 8px; }
+.hud-side.right .hchip { border-left: none; border-right: 3px solid var(--dim); padding-left: 0; padding-right: 8px; }
+.hud-team { font-weight: 900; letter-spacing: 4px; font-size: 13px; }
 .hud-name { font-weight: 800; letter-spacing: 2px; font-size: 15px; color: var(--dim); }
 .hud-pct { font-size: 52px; font-weight: 900; line-height: 1; }
 .hud-stocks { font-size: 20px; color: var(--accent2); letter-spacing: 4px; margin-top: 4px; }
+/* v0.9: compact chips when 3+ fighters share a side */
+.hud-side .hchip:nth-child(n+3) .hud-pct { font-size: 34px; }
+.hud-side .hchip:nth-child(n+3) .hud-name { font-size: 12px; }
+.hud-side .hchip:nth-child(n+3) .hud-stocks { font-size: 14px; }
 .hud-center { text-align: center; }
 .hud-timer { font-size: 30px; font-weight: 800; letter-spacing: 2px; }
 .hud-pause-hint { font-size: 11px; color: var(--dim); letter-spacing: 1px; }

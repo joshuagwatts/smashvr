@@ -96,21 +96,42 @@ function showHud(v) {
 }
 
 // ------------------------------------------------------------ fighter select
+// v0.9: slot-based roster — 8 slots, each with a fighter def, a controller
+// (closed/cpu/p1/p2) and a team (none/red/blue). Click a slot to select it;
+// the CTRL badge cycles its controller, the team dot cycles its team;
+// fighter cards assign their def to the selected slot.
 
 let mode = 'cpu';           // 'cpu' | 'versus'
-let selP1 = 'ronin', selP2 = 'volt';
 let game = null;
 let lastDefs = null;
 let rosterReady = null; // initRoster() promise — select waits for customs
 
-function defCard(defId, group) {
+const CTRLS = ['closed', 'cpu', 'p1', 'p2'];
+const CTRL_LABEL = { closed: '—', cpu: 'CPU', p1: 'P1', p2: 'P2' };
+const TEAMS = [null, 'red', 'blue'];
+
+function defaultSlots(m) {
+  const s = [
+    { def: 'ronin', ctrl: 'p1', team: null },
+    { def: 'volt', ctrl: m === 'cpu' ? 'cpu' : 'p2', team: null },
+  ];
+  for (let i = 2; i < 8; i++) s.push({ def: 'ronin', ctrl: 'closed', team: null });
+  return s;
+}
+let slots = defaultSlots('cpu');
+let selSlot = 0;
+
+function activeSlots() {
+  return slots.filter((s) => s.ctrl !== 'closed');
+}
+
+function defCard(defId) {
   // Build from the live fighter def so class + theme swatch always match.
   let f = null;
   try { f = createFighter(defId); } catch (e) { /* fighter half not landed yet */ }
   const el = document.createElement('div');
-  el.className = 'fcard' + (((group === 1 && defId === selP1) || (group === 2 && defId === selP2)) ? ' sel' : '');
+  el.className = 'fcard' + (slots[selSlot].def === defId ? ' sel' : '');
   el.dataset.def = defId;
-  el.dataset.group = group;
   const def = FIGHTER_DEFS[defId];
   const cls = f ? f.cls.toUpperCase() : '?';
   // v0.6: body type on the card so floaters are visible at select time.
@@ -124,43 +145,88 @@ function defCard(defId, group) {
     <div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})${def && def.custom ? ';border:1px dashed #9aa3b2' : ''}"></div>`;
   el.addEventListener('click', () => {
     sfx.uiMove();
-    if (group === 1) selP1 = defId; else selP2 = defId;
-    refreshCards();
+    slots[selSlot].def = defId;
+    refreshSelect();
   });
   return el;
 }
 
-function refreshCards() {
-  const g1 = $('p1-cards'), g2 = $('p2-cards');
-  g1.innerHTML = ''; g2.innerHTML = '';
+function slotCard(i) {
+  const s = slots[i];
+  const el = document.createElement('div');
+  el.className = 'slot' + (i === selSlot ? ' sel' : '') + (s.ctrl === 'closed' ? ' closed' : '');
+  const teamCls = s.team ? ' team-' + s.team : '';
+  const ctrlBtn = document.createElement('button');
+  ctrlBtn.className = 'slot-ctrl';
+  ctrlBtn.textContent = CTRL_LABEL[s.ctrl];
+  ctrlBtn.title = 'Controller: click to cycle';
+  ctrlBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    sfx.uiMove();
+    selSlot = i; // interacting with a slot selects it
+    const next = CTRLS[(CTRLS.indexOf(s.ctrl) + 1) % CTRLS.length];
+    // only one human P1 / P2 across slots — setting it here clears it elsewhere
+    if ((next === 'p1' || next === 'p2') && slots.some((o, j) => j !== i && o.ctrl === next)) {
+      slots.forEach((o, j) => { if (j !== i && o.ctrl === next) o.ctrl = 'cpu'; });
+    }
+    s.ctrl = next;
+    refreshSelect();
+  });
+  const teamBtn = document.createElement('button');
+  teamBtn.className = 'slot-team' + teamCls;
+  teamBtn.title = 'Team: click to cycle (none → red → blue)';
+  teamBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    sfx.uiMove();
+    selSlot = i; // interacting with a slot selects it
+    s.team = TEAMS[(TEAMS.indexOf(s.team) + 1) % TEAMS.length];
+    refreshSelect();
+  });
+  const nm = document.createElement('div');
+  nm.className = 'slot-name';
+  let dispName = s.def.toUpperCase();
+  try { const d = FIGHTER_DEFS[s.def]; dispName = d && d.custom ? d.name : s.def.toUpperCase(); } catch (e) {}
+  nm.textContent = `S${i + 1} · ${dispName}`;
+  el.appendChild(nm);
+  el.appendChild(ctrlBtn);
+  el.appendChild(teamBtn);
+  el.addEventListener('click', () => { sfx.uiMove(); selSlot = i; refreshSelect(); });
+  return el;
+}
+
+function refreshSelect() {
+  const strip = $('slot-strip');
+  strip.innerHTML = '';
+  slots.forEach((s, i) => strip.appendChild(slotCard(i)));
+  const pool = $('fighter-cards');
+  pool.innerHTML = '';
   // v0.7: built-ins first, then the CUSTOM section (imported characters).
   const builtin = [], custom = [];
   for (const d of Object.keys(FIGHTER_DEFS)) {
     (FIGHTER_DEFS[d].custom ? custom : builtin).push(d);
   }
-  for (const d of builtin) {
-    g1.appendChild(defCard(d, 1));
-    g2.appendChild(defCard(d, 2));
-  }
+  for (const d of builtin) pool.appendChild(defCard(d));
   if (custom.length) {
-    for (const [g, grp] of [[g1, 1], [g2, 2]]) {
-      const lab = document.createElement('div');
-      lab.className = 'fcard-label';
-      lab.textContent = '— CUSTOM —';
-      g.appendChild(lab);
-      for (const d of custom) g.appendChild(defCard(d, grp));
-    }
+    const lab = document.createElement('div');
+    lab.className = 'fcard-label';
+    lab.textContent = '— CUSTOM —';
+    pool.appendChild(lab);
+    for (const d of custom) pool.appendChild(defCard(d));
   }
+  const n = activeSlots().length;
+  $('btn-start').textContent = n >= 2 ? `START FIGHT (${n})` : 'NEED 2+ FIGHTERS';
 }
 
 function openSelect(m) {
   mode = m;
-  $('select-title').textContent = m === 'cpu' ? '1P vs CPU — choose fighters' : '2P Versus — choose fighters';
-  $('p1-mode-tag').textContent = m === 'cpu' ? '(you)' : '(P1)';
-  $('p2-label').textContent = m === 'cpu' ? 'CPU' : 'P2';
+  slots = defaultSlots(m);
+  selSlot = 0;
+  $('select-title').textContent = m === 'cpu' ? '1P vs CPU — choose fighters' : '2P Versus — battle setup';
   // v0.7: customs rebuild from IndexedDB before the cards render
   rosterReady.finally(() => {
-    refreshCards();
+    // a custom slot may have been deleted while we were away
+    slots.forEach((s) => { if (!FIGHTER_DEFS[s.def]) s.def = 'ronin'; });
+    refreshSelect();
     show('screen-select');
   });
 }
@@ -168,12 +234,36 @@ function openSelect(m) {
 // ------------------------------------------------------------ game lifecycle
 
 function renderHud(s) {
-  $('hud-p1-name').textContent = s.p1.name + ' · P1';
-  $('hud-p2-name').textContent = s.p2.name + (mode === 'cpu' ? ' · CPU' : ' · P2');
-  $('hud-p1-pct').textContent = Math.floor(s.p1.percent) + '%';
-  $('hud-p2-pct').textContent = Math.floor(s.p2.percent) + '%';
-  $('hud-p1-stocks').textContent = '●'.repeat(Math.max(0, s.p1.stocks));
-  $('hud-p2-stocks').textContent = '●'.repeat(Math.max(0, s.p2.stocks));
+  // v0.9: fighter chips — left = red team (or slot 0 in FFA), right = blue
+  // team (or the rest). 1v1 FFA reproduces the old P1-left/P2-right look.
+  const left = $('hud-left'), right = $('hud-right');
+  left.innerHTML = ''; right.innerHTML = '';
+  const fs = s.fighters;
+  const teamMode = fs.some((f) => f.team);
+  const chip = (f) => {
+    const d = document.createElement('div');
+    d.className = 'hchip';
+    d.style.borderColor = f.color;
+    const ctrlTag = f.ctrl === 'cpu' ? 'CPU' : f.ctrl.toUpperCase();
+    d.innerHTML = `<div class="hud-name" style="color:${f.color}">${f.name} · ${ctrlTag}</div>
+      <div class="hud-pct" style="color:${f.color}">${Math.floor(f.percent)}%</div>
+      <div class="hud-stocks">${'●'.repeat(Math.max(0, f.stocks))}</div>`;
+    return d;
+  };
+  const leftFs = teamMode ? fs.filter((f) => f.team === 'red') : fs.slice(0, 1);
+  const rightFs = teamMode ? fs.filter((f) => f.team === 'blue') : fs.slice(1);
+  const midFs = teamMode ? fs.filter((f) => !f.team) : [];
+  if (teamMode && leftFs.length) {
+    const h = document.createElement('div'); h.className = 'hud-team'; h.textContent = 'RED'; h.style.color = '#ff3b30';
+    left.appendChild(h);
+  }
+  leftFs.forEach((f) => left.appendChild(chip(f)));
+  midFs.forEach((f) => left.appendChild(chip(f)));
+  if (teamMode && rightFs.length) {
+    const h = document.createElement('div'); h.className = 'hud-team'; h.textContent = 'BLUE'; h.style.color = '#0a84ff';
+    right.appendChild(h);
+  }
+  rightFs.forEach((f) => right.appendChild(chip(f)));
   const t = s.time;
   $('hud-timer').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
   const cd = $('hud-countdown');
@@ -185,13 +275,15 @@ function renderHud(s) {
   }
 }
 
-function startFight(p1def, p2def, m, isDemo = false) {
+function startFightWithSlots(slotList, m, isDemo = false) {
   destroyGame();
   show(null);
   showHud(true);
-  lastDefs = { p1def, p2def, m };
+  // snapshot for rematch (defs may be deleted from the roster later)
+  lastDefs = { slots: slotList.map((s) => ({ ...s })), m };
   game = createGame({
-    mode: m, p1def, p2def, scene, demo: isDemo,
+    slots: slotList.filter((s) => s.ctrl !== 'closed').map((s) => ({ ...s })),
+    scene, demo: isDemo,
     onEnd: (result) => {
       showHud(false);
       $('results-winner').textContent = `${result.winner.name.toUpperCase()} WINS`;
@@ -202,59 +294,59 @@ function startFight(p1def, p2def, m, isDemo = false) {
     onPause: (paused) => { if (paused) show('screen-pause'); else show(null); },
     onHud: renderHud,
   });
-  // v0.7: custom roster slots — each side's imported model attaches to its
-  // own fighter (replaces the old pendingVRM -> P1 flow).
-  attachCustoms(game, p1def, p2def);
-  // v0.3 colors: mirror match (same def both sides) -> P2 gets the def's
-  // altTheme via the same rig.setTheme path the base theme uses. VRM-driven
-  // fighters keep their own look (f._isVRM check); one VRM side needs no alt.
-  // Customs never have altTheme (deleted at registration).
-  if (p1def === p2def) {
-    const def = FIGHTER_DEFS[p1def];
-    const p2 = game.fighters[1];
-    if (def && def.altTheme && !def.custom && !game.fighters[0]._isVRM && !p2._isVRM &&
-        p2.rig && typeof p2.rig.setTheme === 'function') {
-      p2.rig.setTheme(def.altTheme);
-      p2.theme = { primary: def.altTheme.primary, secondary: def.altTheme.secondary };
+  // v0.7: custom roster slots — each custom fighter's imported model attaches
+  // to its own fighter (replaces the old pendingVRM -> P1 flow).
+  attachCustoms(game);
+  // v0.3 colors: mirror match (same def more than once) -> 2nd+ occurrences
+  // get the def's altTheme. VRM-driven fighters keep their own look
+  // (f._isVRM check); customs never have altTheme.
+  {
+    const seen = new Set();
+    for (const f of game.fighters) {
+      const def = FIGHTER_DEFS[f.defId];
+      if (seen.has(f.defId) && def && def.altTheme && !def.custom && !f._isVRM &&
+          f.rig && typeof f.rig.setTheme === 'function') {
+        f.rig.setTheme(def.altTheme);
+        f.theme = { primary: def.altTheme.primary, secondary: def.altTheme.secondary };
+      }
+      seen.add(f.defId);
     }
   }
-  // v0.3 colors: HUD in Smash port colors. The percent number has no
-  // damage-tint semantics (renderHud + css never recolor it), so this is safe.
-  const P1_PORT = '#ff3b30', P2_PORT = '#0a84ff';
-  $('hud-p1-name').style.color = P1_PORT;
-  $('hud-p2-name').style.color = P2_PORT;
-  $('hud-p1-pct').style.color = P1_PORT;
-  $('hud-p2-pct').style.color = P2_PORT;
-  if (DEBUG) window.__sv = { game, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount } };
+  if (DEBUG) window.__sv = {
+    game, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount },
+    // v0.9: debug hook — start any slot configuration directly (browser tests)
+    startSlots: (list, m = 'cpu') => startFightWithSlots(list, m),
+  };
 }
 
-// v0.7: attach each custom side's imported model to its own fighter.
+// v0.7: attach each custom fighter's imported model to its own fighter.
 // Async (model may load from IndexedDB on first use after a reload); the
 // fight runs on the procedural rig until the model lands.
-async function attachCustoms(g, p1def, p2def) {
-  const defs = [p1def, p2def];
-  for (let i = 0; i < 2; i++) {
-    if (!isCustom(defs[i])) continue;
+async function attachCustoms(g) {
+  for (let i = 0; i < g.fighters.length; i++) {
+    const f = g.fighters[i];
+    if (!isCustom(f.defId)) continue;
     try {
-      const data = await getCharacterData(defs[i]);
-      if (!g.fighters[i].root.parent) return; // fight was quit mid-load
-      attachVRMToFighter(g.fighters[i], data);
+      const data = await getCharacterData(f.defId);
+      if (!f.root.parent) return; // fight was quit mid-load
+      attachVRMToFighter(f, data);
       // imported body type drives hover locomotion — unless the Lab's manual
       // override for this def says otherwise (override wins, no re-import).
-      const ov = readBodyTypeOverride(defs[i]);
+      const ov = readBodyTypeOverride(f.defId);
       if (data.autorig && data.autorig.bodyType && (!ov || ov === 'auto')) {
-        g.fighters[i].bodyType = data.autorig.bodyType;
+        f.bodyType = data.autorig.bodyType;
       }
     } catch (err) {
-      toast(`Custom model failed (${defs[i]}): ` + err.message, true);
+      toast(`Custom model failed (${f.defId}): ` + err.message, true);
     }
   }
 }
 
 function destroyGame() {
   if (!game) return;
-  try { removeVRMFromFighter(game.fighters[0]); } catch (e) {}
-  try { removeVRMFromFighter(game.fighters[1]); } catch (e) {}
+  for (const f of game.fighters) {
+    try { removeVRMFromFighter(f); } catch (e) {}
+  }
   game.destroy();
   game = null;
   showHud(false);
@@ -271,13 +363,17 @@ function quitToTitle() {
 $('btn-1p').addEventListener('click', () => { sfx.select(); openSelect('cpu'); });
 $('btn-2p').addEventListener('click', () => { sfx.select(); openSelect('versus'); });
 $('btn-back').addEventListener('click', () => { sfx.uiMove(); show('screen-title'); });
-$('btn-start').addEventListener('click', () => { sfx.select(); startFight(selP1, selP2, mode); });
+$('btn-start').addEventListener('click', () => {
+  sfx.select();
+  if (activeSlots().length < 2) { toast('Need at least 2 fighters — open some slots', true); return; }
+  startFightWithSlots(slots, mode);
+});
 
 $('btn-resume').addEventListener('click', () => { sfx.select(); if (game) game.setPaused(false); });
 $('btn-quit').addEventListener('click', () => { sfx.uiMove(); quitToTitle(); });
 $('btn-rematch').addEventListener('click', () => {
   sfx.select();
-  if (lastDefs) startFight(lastDefs.p1def, lastDefs.p2def, lastDefs.m);
+  if (lastDefs) startFightWithSlots(lastDefs.slots, lastDefs.m);
 });
 $('btn-results-title').addEventListener('click', () => { sfx.uiMove(); quitToTitle(); });
 
@@ -317,7 +413,7 @@ $('vrm-file').addEventListener('change', async (e) => {
     if (st) {
       st.textContent = `${name}: ${bodyType === 'floater' ? 'Floater — hover locomotion' : 'Biped'} (auto-detected), ${poseTxt}`;
     }
-    refreshCards();
+    refreshSelect();
     sfx.select();
   } catch (err) {
     toast('Import failed: ' + err.message, true);
@@ -331,7 +427,7 @@ $('btn-lab').addEventListener('click', () => {
   const overlay = $('lab-overlay');
   overlay.classList.remove('hidden');
   try {
-    openLab(overlay, () => labFighter || (labFighter = createFighter(selP1)));
+    openLab(overlay, () => labFighter || (labFighter = createFighter(slots[0].def)));
   } catch (err) {
     toast('Lab failed to open: ' + err.message, true);
     overlay.classList.add('hidden');
@@ -341,9 +437,9 @@ $('btn-lab').addEventListener('click', () => {
 // cached preview fighter so the next open / fight re-reads the saved kit.
 new MutationObserver(() => {
   if ($('lab-overlay').classList.contains('hidden') || $('lab-overlay').childElementCount === 0) {
-    // v0.7: a custom slot may have been deleted — reset stale selections
-    if (!FIGHTER_DEFS[selP1]) selP1 = 'ronin';
-    if (!FIGHTER_DEFS[selP2]) selP2 = 'volt';
+    // v0.7: a custom slot may have been deleted — reset stale selections.
+    // v0.9: slot defs instead of selP1/selP2.
+    slots.forEach((s) => { if (!FIGHTER_DEFS[s.def]) s.def = 'ronin'; });
     if (labFighter) { labFighter = null; toast('Lab closed — P1 kit updated'); }
   }
 }).observe($('lab-overlay'), { childList: true, attributes: true, attributeFilter: ['class'] });
@@ -378,7 +474,10 @@ frame();
 
 // ?demo=1 — straight into a CPU-vs-CPU exhibition, no screens
 if (DEMO) {
-  startFight('ronin', 'volt', 'cpu', true);
+  startFightWithSlots(defaultSlots('cpu'), 'cpu', true);
   toast('demo mode — CPU vs CPU');
 }
-if (DEBUG && !window.__sv) window.__sv = { get game() { return game; }, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount } };
+if (DEBUG && !window.__sv) window.__sv = {
+  get game() { return game; }, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount },
+  startSlots: (list, m = 'cpu') => startFightWithSlots(list, m),
+};
