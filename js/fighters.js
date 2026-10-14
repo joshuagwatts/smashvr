@@ -6,6 +6,7 @@
 import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js';
 import { buildProceduralRig } from './rig.js';
 import { classBudget } from './budget.js';
+import * as THREE from 'three';
 
 function loadJSON(key) {
   try {
@@ -37,6 +38,11 @@ export function createFighter(defId) {
   };
 
   const rig = buildProceduralRig(theme, defId);
+  // v0.6.2: root is a wrapper — attachVRMToFighter hides rig.group only, so the
+  // per-frame root visibility toggle (respawn blink in anim.js) can never
+  // re-show the procedural rig on top of an attached VRM.
+  const root = new THREE.Group();
+  root.add(rig.group);
 
   // Kit: native moveset overlaid with the saved lab kit.
   const savedKit = loadJSON('smashvr_kit_' + defId) || {};
@@ -74,7 +80,7 @@ export function createFighter(defId) {
     moves,
     budget: classBudget(def.cls),
 
-    root: rig.group,
+    root,
     rig,
     vrm: null,
 
