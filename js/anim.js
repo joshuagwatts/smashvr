@@ -20,7 +20,8 @@ function basePose() {
 }
 
 // Interpolate a move's keyframe track at moveFrame/total.
-function attackPose(move, moveFrame) {
+// Exported for the hitbox-sync test (test/hitbox_sync.mjs).
+export function attackPose(move, moveFrame) {
   const keys = move.anim;
   const t = move.total > 0 ? Math.min(1, Math.max(0, moveFrame / move.total)) : 1;
   let i = 0;

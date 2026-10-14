@@ -143,6 +143,7 @@ export function spawnProjectile(ownerF, move, x, y, dir) {
     vy: 2.0,
     w: pr.w, h: pr.h,
     dmg: pr.dmg, angle: pr.angle, baseKB: pr.baseKB, kbGrowth: pr.kbGrowth,
+    kbClass: move.kbClass || 'weak',
     life: pr.life / 60, // frames -> seconds
     owner: ownerF,
     theme: { primary: theme.primary, secondary: theme.secondary },

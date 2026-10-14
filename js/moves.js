@@ -255,12 +255,12 @@ const ronin = {
   }),
   ftilt: mv('ronin', 'ftilt', {
     name: 'Side Kick', startup: 6, active: 4, total: 30, kbClass: 'neutral', lunge: [0.10, 0],
-    hits: [H(0.75, 0.75, 0.8, 0.5, 13, 35, 35, 90, 6, 10)],
+    hits: [H(0.7, 0.6, 0.9, 0.7, 13, 35, 35, 90, 6, 10)],
     anim: [K(0, 'NEUTRAL'), K(5 / 30, 'WINDUP_KICK_R'), K(8 / 30, 'KICK_R'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   utilt: mv('ronin', 'utilt', {
     name: 'Rising Palm', startup: 5, active: 6, total: 28, kbClass: 'neutral',
-    hits: [H(0.3, 1.55, 0.7, 0.7, 10, 88, 30, 100, 5, 11)],
+    hits: [H(0.65, 1.45, 0.8, 0.8, 10, 88, 30, 100, 5, 11)],
     anim: [K(0, 'NEUTRAL'), K(4 / 28, 'CROUCH'), K(7 / 28, 'PALM'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dtilt: mv('ronin', 'dtilt', {
@@ -275,14 +275,14 @@ const ronin = {
   }),
   usmash: mv('ronin', 'usmash', {
     name: 'Skyward Fist', startup: 9, active: 8, total: 52, kbClass: 'kill',
-    hits: [H(0.25, 1.6, 0.8, 0.8, 19, 88, 50, 120, 9, 17)],
+    hits: [H(0.85, 1.25, 0.8, 0.8, 19, 88, 50, 120, 9, 17)],
     anim: [K(0, 'NEUTRAL'), K(6 / 52, 'CROUCH'), K(12 / 52, 'UPPERCUT'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dsmash: mv('ronin', 'dsmash', {
     name: 'Whirlwind Kick', startup: 10, active: 8, total: 50, kbClass: 'strong',
     hits: [
-      H(0.6, 0.6, 0.85, 0.55, 17, 30, 45, 105, 10, 14),
-      H(-0.6, 0.6, 0.85, 0.55, 17, 30, 45, 105, 14, 18),
+      H(0.35, 0.55, 0.9, 0.7, 17, 30, 45, 105, 10, 14),
+      H(-0.65, 0.55, 0.9, 0.7, 17, 150, 45, 105, 14, 18),
     ],
     anim: [K(0, 'NEUTRAL'), K(8 / 50, 'CROUCH'), K(12 / 50, 'SPIN_A', { hips: [0, 1.5, 0] }), K(16 / 50, 'SPIN_A', { hips: [0, 3.1, 0] }), K(20 / 50, 'SPIN_A', { hips: [0, 4.7, 0] }), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
@@ -298,20 +298,20 @@ const ronin = {
   }),
   bair: mv('ronin', 'bair', {
     name: 'Back Kick', startup: 11, active: 6, total: 42, kbClass: 'strong',
-    hits: [H(-0.8, 1.0, 0.8, 0.6, 15, 35, 40, 100, 11, 17)],
+    hits: [H(-0.15, 1.45, 0.8, 0.7, 15, 145, 40, 100, 11, 17)],
     anim: [K(0, 'NEUTRAL'), K(8 / 42, 'WINDUP_R'), K(13 / 42, 'ELBOW_BACK'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   uair: mv('ronin', 'uair', {
     name: 'Helm Splitter', startup: 2, active: 10, total: 34, kbClass: 'neutral',
-    hits: [H(0.2, 1.6, 0.7, 0.7, 11, 85, 30, 95, 2, 12)],
+    hits: [H(0.72, 1.35, 0.7, 1.0, 11, 85, 30, 95, 2, 12)],
     anim: [K(0, 'NEUTRAL'), K(2 / 34, 'CROUCH'), K(6 / 34, 'OVERHEAD'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dair: mv('ronin', 'dair', {
     name: 'Drill Stomp', startup: 16, active: 12, total: 48, kbClass: 'neutral',
     hits: [
-      H(0, 0.35, 0.8, 0.6, 4, 270, 15, 40, 16, 20),
-      H(0, 0.35, 0.8, 0.6, 4, 270, 15, 40, 20, 24),
-      H(0, 0.35, 0.8, 0.6, 4, 60, 25, 60, 24, 28),
+      H(0.3, 0.25, 0.8, 0.6, 4, 270, 15, 40, 16, 20),
+      H(0.3, 0.25, 0.8, 0.6, 4, 270, 15, 40, 20, 24),
+      H(0.3, 0.25, 0.8, 0.6, 4, 60, 25, 60, 24, 28),
     ],
     anim: [K(0, 'NEUTRAL'), K(12 / 48, 'CROUCH'), K(18 / 48, 'STOMP'), K(30 / 48, 'STOMP'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
@@ -329,8 +329,8 @@ const ronin = {
   uspecial: mv('ronin', 'uspecial', {
     name: 'Rising Punch', startup: 4, active: 10, total: 50, kbClass: 'strong', special: 'rise', lunge: [0, 0],
     hits: [
-      H(0.4, 1.2, 0.7, 0.6, 5, 80, 40, 80, 4, 7),
-      H(0.2, 1.6, 0.7, 0.7, 9, 80, 45, 100, 7, 14),
+      H(0.7, 1.1, 0.7, 0.7, 5, 80, 40, 80, 4, 7),
+      H(0.85, 1.35, 0.7, 0.7, 9, 80, 45, 100, 7, 14),
     ],
     anim: [K(0, 'NEUTRAL'), K(3 / 50, 'CROUCH'), K(8 / 50, 'RISE_B'), K(16 / 50, 'RISE_B'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
@@ -362,12 +362,12 @@ const volt = {
   }),
   ftilt: mv('volt', 'ftilt', {
     name: 'Shoulder Check', startup: 8, active: 4, total: 32, kbClass: 'neutral',
-    hits: [H(0.7, 1.0, 0.8, 0.6, 14, 35, 38, 95, 8, 12)],
+    hits: [H(0.35, 1.3, 0.9, 0.7, 14, 35, 38, 95, 8, 12)],
     anim: [K(0, 'NEUTRAL'), K(6 / 32, 'WINDUP_R'), K(10 / 32, 'SHOULDER'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   utilt: mv('volt', 'utilt', {
     name: 'Uppercut', startup: 7, active: 5, total: 30, kbClass: 'neutral',
-    hits: [H(0.35, 1.55, 0.7, 0.7, 11, 80, 34, 95, 7, 12)],
+    hits: [H(0.8, 1.3, 0.8, 0.8, 11, 80, 34, 95, 7, 12)],
     anim: [K(0, 'NEUTRAL'), K(5 / 30, 'CROUCH'), K(9 / 30, 'UPPERCUT'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dtilt: mv('volt', 'dtilt', {
@@ -382,14 +382,16 @@ const volt = {
   }),
   usmash: mv('volt', 'usmash', {
     name: 'Thunder Clap', startup: 4, active: 6, total: 44, kbClass: 'strong',
-    hits: [H(0.2, 1.65, 0.9, 0.7, 16, 88, 48, 110, 4, 10)],
+    hits: [H(0.7, 1.15, 0.9, 0.8, 16, 88, 48, 110, 4, 10)],
     anim: [K(0, 'NEUTRAL'), K(3 / 44, 'CROUCH'), K(7 / 44, 'CLAP'), K(0.7, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dsmash: mv('volt', 'dsmash', {
     name: 'Ground Pound', startup: 12, active: 8, total: 52, kbClass: 'neutral',
+    // v0.2: the POUND pose slams the RIGHT fist down-forward (left fist rises
+    // behind) — a single honest hitbox on the right fist replaces the old
+    // phantom back-low box.
     hits: [
-      H(0.6, 0.55, 0.85, 0.55, 16, 30, 44, 100, 12, 16),
-      H(-0.6, 0.55, 0.85, 0.55, 16, 30, 44, 100, 16, 20),
+      H(0.8, 1.0, 0.9, 0.8, 16, 30, 44, 100, 12, 20),
     ],
     anim: [K(0, 'NEUTRAL'), K(9 / 52, 'CROUCH'), K(14 / 52, 'POUND'), K(22 / 52, 'POUND'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
@@ -400,17 +402,17 @@ const volt = {
   }),
   fair: mv('volt', 'fair', {
     name: 'Knee Strike', startup: 16, active: 4, total: 46, kbClass: 'kill', lunge: [0.08, 0],
-    hits: [H(0.7, 1.0, 0.7, 0.6, 18, 25, 46, 115, 16, 20)],
+    hits: [H(0.5, 0.85, 0.7, 0.7, 18, 25, 46, 115, 16, 20)],
     anim: [K(0, 'NEUTRAL'), K(12 / 46, 'WINDUP_KICK_R'), K(18 / 46, 'KNEE'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   bair: mv('volt', 'bair', {
     name: 'Reverse Kick', startup: 12, active: 6, total: 42, kbClass: 'neutral',
-    hits: [H(-0.8, 1.05, 0.8, 0.6, 14, 35, 40, 100, 12, 18)],
+    hits: [H(-0.6, 0.65, 0.8, 0.7, 14, 145, 40, 100, 12, 18)],
     anim: [K(0, 'NEUTRAL'), K(9 / 42, 'WINDUP_KICK_R'), K(14 / 42, 'KICK_BACK'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   uair: mv('volt', 'uair', {
     name: 'Sky Kick', startup: 6, active: 8, total: 36, kbClass: 'neutral',
-    hits: [H(0.25, 1.6, 0.7, 0.7, 12, 85, 36, 95, 6, 14)],
+    hits: [H(0.78, 1.1, 0.8, 1.0, 12, 85, 36, 95, 6, 14)],
     anim: [K(0, 'NEUTRAL'), K(4 / 36, 'CROUCH'), K(8 / 36, 'KICK_UP'), K(0.75, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dair: mv('volt', 'dair', {
@@ -420,7 +422,7 @@ const volt = {
   }),
   nspecial: mv('volt', 'nspecial', {
     name: 'Volt Punch', startup: 38, active: 4, total: 70, kbClass: 'kill', special: 'punch', lunge: [0.10, 0],
-    hits: [H(0.9, 1.1, 0.8, 0.6, 26, 35, 60, 130, 38, 42)],
+    hits: [H(0.55, 0.9, 0.9, 0.7, 26, 35, 60, 130, 38, 42)],
     anim: [K(0, 'NEUTRAL'), K(20 / 70, 'BIG_WINDUP'), K(34 / 70, 'BIG_WINDUP'), K(40 / 70, 'BIG_PUNCH'), K(0.8, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   sspecial: mv('volt', 'sspecial', {
@@ -430,7 +432,7 @@ const volt = {
   }),
   uspecial: mv('volt', 'uspecial', {
     name: 'Volt Dive', startup: 6, active: 12, total: 54, kbClass: 'strong', special: 'divegrab', lunge: [0.04, 0],
-    hits: [H(0.2, 0.8, 0.9, 1.0, 20, 70, 55, 115, 6, 18)],
+    hits: [H(0.75, 1.0, 1.0, 1.0, 20, 70, 55, 115, 6, 18)],
     anim: [K(0, 'NEUTRAL'), K(4 / 54, 'CROUCH'), K(8 / 54, 'GRAB'), K(18 / 54, 'GRAB'), K(0.85, 'NEUTRAL'), K(1, 'NEUTRAL')],
   }),
   dspecial: mv('volt', 'dspecial', {

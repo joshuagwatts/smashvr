@@ -201,3 +201,118 @@ cd ~/workspace/smashvrm && python3 -m http.server 8902   # keep running
 cp test/playtest.mjs ~/workspace/limbo-test/ && cd ~/workspace/limbo-test
 node smashvrm-playtest.mjs   # 19/19 expected
 ```
+
+## Feel pass v0.2 (2026-10-13) — Joshua's five directives
+
+His verdict after playing v0.1 is ground truth. All five directives implemented,
+verified, and deployed.
+
+### 1. Hitboxes now match the animations (WAS the big one)
+
+Audited every move by posing the REAL procedural rig with the move's own
+keyframe track, sampling every active tick, and measuring hitbox-center to
+striking-limb-tip distance. 14 of 31 moves were out of sync (>0.6u); all fixed
+by moving hitbox data to the measured limb positions (poses untouched, per his
+call). New automated test: `test/hitbox_sync.mjs` (node, three.js headless —
+263 hitbox-tick samples, FAILS if any active hitbox center is >0.6u from its
+limb tip). Now: **263 samples, 0 out of sync.**
+
+Notable fixes (hitbox dx,dy before -> after):
+- ronin utilt (0.3,1.55) -> (0.65,1.45); usmash (0.25,1.6) -> (0.85,1.25);
+  uair (0.2,1.6) -> (0.72,1.35); uspecial boxes -> (0.7,1.1)/(0.85,1.35)
+  (the "up" attacks actually punch diagonally forward-up — boxes follow the fist)
+- ronin bair (-0.8,1.0) -> (-0.15,1.45): the ELBOW_BACK pose throws an elbow,
+  not a kick — hitbox now sits on the elbow (lowerArmR)
+- ronin dsmash boxes recentered to (0.35,0.55)/(-0.65,0.55) tracking the
+  front-most/back-most foot through the spin (test resolves per-tick)
+- volt ftilt (0.7,1.0) -> (0.35,1.3) on the shoulder joint; utilt -> (0.8,1.3);
+  usmash (0.2,1.65) -> (0.7,1.15); fair knee -> (0.5,0.85);
+  bair (-0.8,1.05) -> (-0.6,0.65); uair -> (0.78,1.1, taller box);
+  nspecial (0.9,1.1) -> (0.55,0.9); uspecial (0.2,0.8) -> (0.75,1.0)
+- volt dsmash: the POUND pose slams only the RIGHT fist low (left fist rises
+  behind) — replaced the phantom back-low box with a single honest hitbox
+  (0.8,1.0) on the right fist. Move got cheaper in the Lab budget accordingly
+  (priced on 16 dmg now, was 32).
+
+### 2. Launch directions match the hit
+
+Angle audit + `test/angle_bands.mjs` (asserts every hit/projectile angle in its
+band — all pass). Fixes: both dsmash back-hits 30° -> 150° (were launching
+victims FORWARD through the attacker); both bairs 35° -> 145° (back kick now
+sends victims up-back instead of forward). Everything else was already in
+band: utils/usmash 80-88° up, dtilts ~25-28° low, ftilts/fsmash 30-35° forward,
+dair meteors 270° (ronin final hit pops up at 60°), volt divekick spikes 300°.
+
+### 3. Knockback clearly scales with damage (he felt it was flat)
+
+Root cause: the old formula's flat floor (+18, baseKB) dominated low-damage
+moves — jab went 0.20u -> 0.61u from 0% to 180% (3x, invisible on screen).
+Retuned `js/kb.js`: stronger pure-percent term (pct/6), lower floor (+10),
+launch scale 0.0009 -> 0.0018, and NEW per-tick hitstun drag (vx *= 0.97) so
+launches start SNAPPY and decay instead of drifting at constant speed.
+`test/kb_scaling.mjs` replicates the engine's displacement model and asserts:
+
+| move | 0% | 60% | 120% | 180% |
+|---|---|---|---|---|
+| jab | 0.28u | 0.61u | 0.98u | 1.45u (5.1x) |
+| ftilt | 0.87u | 3.90u | 7.49u | 11.06u (12.7x) |
+| fsmash | 1.34u | 6.54u | 12.09u | 17.38u (12.9x) |
+
+KO calibration held: fsmash side-blast KOs at **82%** from x=4.5 (band 80-110);
+jab at 0% still a 0.28u poke (combo game intact). `test/test_logic.mjs` golden
+values updated for the new formula (its vy assertion was ALSO stale from
+pre-rebalance — it was failing before this pass; now 14/14 pass).
+
+### 4. Subtle camera shake on massive hits
+
+`updateCamera` in `js/engine.js`: on hits with kbClass strong/kill, amplitude =
+min(0.30, 0.06 + kb*0.0009), duration 8-15 ticks, quadratic decay. Weak pokes:
+zero shake. Verified in browser (`test/feel_v02.mjs`): jab connects (cpu 2%)
+with t=0/amp=0; fsmash fires amp=0.183, dur=10.
+
+### 5. Camera freeze on the KO blow
+
+`applyHit` predicts the KO with an engine-faithful simulation (drag + gravity +
+stage landing + slide-out check). When the victim is on their LAST stock and
+the trajectory crosses a blast line: both fighters freeze 26 ticks (hitPause),
+camera pushes in toward the victim (z 16 -> 12.5, smoothstepped, then eases
+back over 20 ticks) + 0.30 shake pulse, then releases into the launch.
+Verified in browser: _koFx fires, defender hitPause=21-22 / attacker 22-23 on
+first sample, camera z drops (15.78 and falling), shake pulse 0.30, and the
+freeze resolves into a real KO. Screenshots: `verify/kofreeze.png` (freeze
+frame, camera pushed in), `verify/shake.png` (fsmash connecting).
+
+### Verification summary (all green)
+
+- `test/test_logic.mjs`: 14/14
+- `test/hitbox_sync.mjs`: 263 samples, 0 out of sync (NEW)
+- `test/angle_bands.mjs`: all 31 moves in band (NEW)
+- `test/kb_scaling.mjs`: dramatic curves + KO% 82 in band (NEW)
+- `test/playtest.mjs`: 19/19 (no regressions)
+- `test/feel_v02.mjs`: 11/11 — jab no-shake, fsmash shake, KO freeze flags,
+  camera push-in, real KO resolution, zero console errors (NEW)
+
+### Changed files (deployed)
+
+js/kb.js (formula, scale, drag), js/moves.js (17 hitbox/angle fixes),
+js/engine.js (hitstun drag, shake, KO freeze, camera), js/fx.js (projectile
+kbClass), js/anim.js (export attackPose for the test), test/test_logic.mjs
+(golden values), test/hitbox_sync.mjs + test/angle_bands.mjs +
+test/kb_scaling.mjs + test/feel_v02.mjs (new), test/dump_traj.mjs (dev tool),
+PLAYTEST.md (this section).
+
+### Honest not-verified list (post-v0.2)
+
+- **Game feel is still his call** — numbers are tuned and the mechanics are
+  honest, but only his hands decide if it FEELS like Smash.
+- **Real VRM file import** — still no .vrm on hand (his directive: test after
+  gameplay is dialed in — that time is now).
+- **Audio** — still muted headless; SFX not actually heard.
+- **KO%s vs a live victim** — DI and recovery change everything; treat as floors.
+- **Shake subtlety on real hardware** — amplitudes were eyeballed against the
+  14u stage; may want nudging up/down after he plays.
+- **KO prediction edge cases** — floating platforms aren't simulated in
+  predictKO (rare false freeze, recovers cleanly); victim already past the
+  blast line when hit dies during the freeze (correct outcome, camera targets
+  the hit position).
+- **CPU AI quality** — still not evaluated beyond not-suiciding.

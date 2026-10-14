@@ -11,7 +11,7 @@ import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
 } from './fx.js';
-import { knockback, hitstunFrames, launchVelocity } from './kb.js';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js';
 import { Input } from './input.js';
 import { sfx } from './audio.js';
 
@@ -187,6 +187,9 @@ export function createGame(opts) {
     _cd: 100,                    // countdown ticks (~1.7s of 3-2-1)
     _timer: MATCH_TIME * 60,
     _human: [blankHold(), blankHold()],
+    // feel pass v0.2: impact shake + KO-blow cinematic state
+    _shakeT: 0, _shakeDur: 1, _shakeAmp: 0,
+    _koFx: null,                // { t, dur, x, y } while the KO freeze plays
 
     update(dt) {
       if (this.paused || this.state === 'done') return;
@@ -310,11 +313,42 @@ function syncRoot(f) {
 function updateCamera(game) {
   const [a, b] = game.fighters;
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-  const cx = Math.max(-4, Math.min(4, mx)) * 0.6;
+  let cx = Math.max(-4, Math.min(4, mx)) * 0.6;
   const dist = Math.abs(a.x - b.x);
-  const z = 16 + Math.max(0, Math.min(10, dist - 8)) * 0.5;
-  game.camera.position.set(cx, 3.5 + (my - 2) * 0.15, z);
-  game.camera.lookAt(cx, 2.2, 0);
+  let z = 16 + Math.max(0, Math.min(10, dist - 8)) * 0.5;
+  let cy = 3.5 + (my - 2) * 0.15;
+  let lookY = 2.2;
+
+  // KO-blow cinematic (v0.2): push in toward the victim over the freeze,
+  // then ease back out. Blend is smoothstepped so there's no snap.
+  const k = game._koFx;
+  if (k && k.t < k.dur) {
+    k.t++;
+    const IN = 26, OUT = 20;
+    let blend;
+    if (k.t <= IN) blend = k.t / IN;
+    else blend = Math.max(0, 1 - (k.t - IN) / OUT);
+    const e = blend * blend * (3 - 2 * blend);
+    const kx = Math.max(-4, Math.min(4, k.x)) * 0.6;
+    cx = cx + (kx - cx) * e;
+    cy = cy + ((2.4 + k.y * 0.25) - cy) * e;
+    z = z + (12.5 - z) * e;
+    lookY = lookY + (Math.max(0.5, k.y + 1) - lookY) * e;
+  }
+
+  // impact shake (v0.2): subtle, amplitude decays quadratically — strong/kill
+  // hits and KO blows only, never weak pokes.
+  let sx = 0, sy = 0;
+  if (game._shakeT > 0) {
+    game._shakeT--;
+    const u = game._shakeT / game._shakeDur; // 1 -> 0
+    const amp = game._shakeAmp * u * u;
+    sx = (Math.random() * 2 - 1) * amp;
+    sy = (Math.random() * 2 - 1) * amp;
+  }
+
+  game.camera.position.set(cx + sx, cy + sy, z);
+  game.camera.lookAt(cx, lookY, 0);
 }
 
 // ---------------------------------------------------------------- per-fighter step
@@ -338,6 +372,9 @@ function stepFighter(game, f, cur, foe) {
       if (f.stateFrame >= 50) setState(f, 'fall');
       return;
     case 'hitstun':
+      // v0.2: knockback decay — launches start fast and bleed off instead of
+      // drifting at constant speed (calibrated with LAUNCH_VEL_SCALE in kb.js)
+      f.vx *= TUNING.HITSTUN_DRAG;
       physics(game, f);
       if (f.stateFrame >= f._hitstunDur) setState(f, f.onGround ? 'idle' : 'fall');
       return;
@@ -556,7 +593,7 @@ function stepAttack(game, f, e, foe) {
     const hx = f.x + h.dx * f.facing, hy = f.y + h.dy;
     if (rectsOverlap(hx, hy, h.w, h.h, foe.x, foe.y + HURT_H / 2, HURT_W, HURT_H)) {
       f._hitSet.add(foe);
-      applyHit(game, { facing: f.facing, theme: f.theme }, foe, h, hx, hy);
+      applyHit(game, { facing: f.facing, theme: f.theme, kbClass: mv.kbClass }, foe, h, hx, hy);
     }
   }
 
@@ -571,7 +608,25 @@ function stepAttack(game, f, e, foe) {
   }
 }
 
-// att = { facing, theme } — a real fighter or a projectile's owner info
+// v0.2: predict whether a launch will actually KO — simulates the victim's
+// hitstun trajectory with the same drag + gravity the engine applies, including
+// landing on the main stage (a landed victim slides; only a slide that still
+// reaches the blast line counts). Used to trigger the KO-blow freeze.
+function predictKO(def, lvx, lvy, hs) {
+  let x = def.x, y = def.y, vx = lvx, vy = lvy;
+  for (let i = 0; i < hs; i++) {
+    x += vx; y += vy;
+    vx *= TUNING.HITSTUN_DRAG; vy -= GRAV;
+    if (Math.abs(x) > BLAST.x || y > BLAST.top || y < BLAST.bottom) return true;
+    if (vy < 0 && y <= STAGE.top && Math.abs(x) <= STAGE.x1 + 0.15) {
+      const slide = Math.abs(vx) / (1 - TUNING.HITSTUN_DRAG);
+      return Math.abs(x) + slide > BLAST.x;
+    }
+  }
+  return false;
+}
+
+// att = { facing, theme, kbClass } — a real fighter or a projectile's owner info
 function applyHit(game, att, def, hit, hx, hy) {
   if (def.invuln > 0 || def.state === 'dead' || def.state === 'respawn') return;
   exitShieldMesh(def);
@@ -611,11 +666,28 @@ function applyHit(game, att, def, hit, hx, hy) {
   setState(def, 'hitstun');
   def.onGround = false;
 
-  const hp = Math.max(2, Math.round(3 + hit.dmg * 0.25));
+  // v0.2 KO-blow cinematic: if this hit will take the victim's last stock,
+  // freeze BOTH fighters ~26 ticks, punch the camera in on the victim with a
+  // shake pulse, then release into the launch.
+  const koBlow = def.stocks <= 1 && predictKO(def, lvx, lvy, def._hitstunDur);
+  const hp = koBlow ? 26 : Math.max(2, Math.round(3 + hit.dmg * 0.25));
   def.hitPause = hp;
   // attacker freeze: find the real fighter behind att when it's a fighter hit
   const atkF = game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
   if (atkF) atkF.hitPause = hp;
+  if (koBlow) {
+    game._koFx = { t: 0, dur: 46, x: def.x, y: def.y };
+  }
+
+  // v0.2 impact shake: subtle, only on strong/kill hits and KO blows —
+  // amplitude scales with knockback, decays over 8-15 ticks. Weak pokes: none.
+  if (koBlow) {
+    game._shakeT = game._shakeDur = 15;
+    game._shakeAmp = 0.30;
+  } else if (att.kbClass === 'strong' || att.kbClass === 'kill') {
+    game._shakeT = game._shakeDur = Math.min(15, 8 + Math.floor(kb / 50));
+    game._shakeAmp = Math.min(0.30, 0.06 + kb * 0.0009);
+  }
 
   const power = Math.min(1, hit.dmg / 22);
   hitSpark(hx, hy, att.theme, power);
@@ -675,7 +747,7 @@ function stepProjectiles(game) {
       if (rectsOverlap(p.x, p.y, p.w, p.h, f.x, f.y + HURT_H / 2, HURT_W, HURT_H)) {
         p.dead = true;
         applyHit(game,
-          { facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null) },
+          { facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null), kbClass: p.kbClass || 'weak' },
           f, { dmg: p.dmg, angle: p.angle, baseKB: p.baseKB, kbGrowth: p.kbGrowth }, p.x, p.y);
         break;
       }
