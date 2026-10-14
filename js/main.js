@@ -9,6 +9,7 @@ import { createFighter } from './fighters.js';
 import { FIGHTER_DEFS } from './moves.js';
 import { loadVRMFile, attachVRMToFighter, removeVRMFromFighter } from './vrm.js';
 import { openLab } from './lab.js';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -203,7 +204,7 @@ function startFight(p1def, p2def, m, isDemo = false) {
   $('hud-p2-name').style.color = P2_PORT;
   $('hud-p1-pct').style.color = P1_PORT;
   $('hud-p2-pct').style.color = P2_PORT;
-  if (DEBUG) window.__sv = { game };
+  if (DEBUG) window.__sv = { game, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount } };
 }
 
 function destroyGame() {
@@ -249,7 +250,10 @@ $('vrm-file').addEventListener('change', async (e) => {
   if (!file) return;
   try {
     pendingVRM = await loadVRMFile(file);
-    toast('VRM loaded — attaches to P1 on fight start');
+    toast(
+      pendingVRM.autorig ? pendingVRM.autorig.notice : 'VRM loaded — attaches to P1 on fight start',
+      pendingVRM.autorig ? !pendingVRM.autorig.ok : false
+    );
     sfx.select();
   } catch (err) {
     toast('VRM load failed: ' + err.message, true);
@@ -304,4 +308,4 @@ if (DEMO) {
   startFight('ronin', 'volt', 'cpu', true);
   toast('demo mode — CPU vs CPU');
 }
-if (DEBUG && !window.__sv) window.__sv = { get game() { return game; } };
+if (DEBUG && !window.__sv) window.__sv = { get game() { return game; }, sfx, fx: { lastSpark, lastSpeedLines, dmgNumCount, fxCount } };

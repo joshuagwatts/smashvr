@@ -501,3 +501,52 @@ no mechanics, frame data, or Lab changes.
 - **Saved lab theme + mirror combo** — the code path applies alt to P2
   regardless of saved themes, but not exercised headless with localStorage
   presets (fresh profile in the harness)
+
+## v0.5 GLB auto-rig import (2026-10-14)
+
+**What:** the title-screen file input now accepts `.vrm` / `.glb` / `.gltf`. VRM files
+take the existing path unchanged. Static (unrigged) GLB/GLTF characters go through
+new `js/autorig.js`: heuristic skeleton fitting for T-pose/A-pose humanoids
+(bounding-box proportions, arm-axis detection from the shoulder band, joint
+placement at 0.52H hips / 0.80H shoulders / 0.28H knees etc.), smooth
+distance-to-bone-segment weight painting (top-4 normalized), bound as
+`THREE.SkinnedMesh` + `THREE.Skeleton`.
+
+**Integration trick:** the rigger returns a *pseudo-VRM* record
+`{ scene, humanoid: { getNormalizedBoneNode, resetNormalizedPose }, update }`
+so the already-verified VRM attach/pose/detach path (`vrm.js`, `anim.js`) works
+with zero engine changes. Auto-rigged fighters get `_isVRM = true`, so the
+mirror-match alt-tint never touches a user's model (port rings still apply).
+UI toasts are honest: `Auto-rigged — arms detected: T-pose` on success, or
+`Auto-rigged with warnings (…​) — results may be janky` when the proportions
+don't look humanoid.
+
+**Honest limits (v1):**
+- T-pose / A-pose humanoids only. Sitting, kneeling, or stylized non-humanoid
+  meshes get a warning and best-effort output — it will look janky.
+- Files that already contain a skeleton are REJECTED with a clear error
+  ("already contains a skeleton — use the VRM import path") instead of
+  producing garbage silently.
+- Weight painting is smooth distance-based skinning, not Mixamo quality.
+  Fingers/toes/facial bones don't exist; loose clothing will stretch.
+- Pose eulers are the game's own (authored for the procedural rig / VRM
+  T-pose), applied directly like the VRM path — moves read correctly, they
+  just won't be mocap-pretty.
+
+**Tests** (`test/autorig.mjs`, node, no renderer — 19/19 pass):
+- Procedural T-pose primitive humanoid → GLTFExporter → GLTFLoader →
+  auto-rig → pose: bind pose is identity; raising the right arm moves hand
+  verts (>0.10) while head verts stay (<0.02); bending the knee moves shin
+  verts while thigh verts stay. Pose classified T, zero warnings, 17 bones.
+- A-pose variant (30° droop): classified A, same deformation assertions pass.
+- Negative: already-rigged file → clean rejection error; non-humanoid blob →
+  warning path, no crash, honest "may be janky" notice.
+- `test_logic.mjs` 14/14 still green (no shared-code regressions).
+- Other suites (playtest/feel) not re-run here — a concurrent agent owns
+  those files this window; this change touches none of them.
+
+**Not verified:** no live-browser import test from this side (no browser
+available to the verifying agent) — the file picker wiring, `loadVRMFile`
+branching, and pseudo-VRM attach path were reviewed statically. Needs Joshua:
+drag a real character GLB onto the import button and report what happens —
+that is the ground-truth test for v1 heuristics.

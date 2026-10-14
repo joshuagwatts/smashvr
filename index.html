@@ -16,6 +16,9 @@
 </head>
 <body>
 <div id="game"></div>
+<!-- v0.4 juice layers: damage numbers + KO white-vignette flash -->
+<div id="dmg-layer"></div>
+<div id="ko-vignette"></div>
 
 <!-- ============ TITLE ============ -->
 <div id="screen-title" class="screen">
@@ -26,9 +29,10 @@
       <button id="btn-1p" class="btn big">1P vs CPU</button>
       <button id="btn-2p" class="btn big">2P Versus</button>
       <button id="btn-lab" class="btn">Fighter Lab</button>
-      <label class="btn file-btn">Import VRM for P1
-        <input type="file" id="vrm-file" accept=".vrm" hidden>
+      <label class="btn file-btn">Import character (.vrm / .glb / .gltf)
+        <input type="file" id="vrm-file" accept=".vrm,.glb,.gltf" hidden>
       </label>
+      <div class="import-hint">GLB auto-rigs best from a T-pose humanoid</div>
     </div>
     <div class="controls-card">
       <div>

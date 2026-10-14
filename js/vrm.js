@@ -8,6 +8,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 export async function loadVRMFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'glb' || ext === 'gltf') {
+    // Auto-rig path: static character -> fitted humanoid skeleton.
+    // Dynamic import keeps the rigger out of the boot bundle.
+    const { autoRigCharacterFile } = await import('./autorig.js');
+    return autoRigCharacterFile(file);
+  }
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
   const url = URL.createObjectURL(file);
