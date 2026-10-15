@@ -175,6 +175,15 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
 .hud-name { font-weight: 800; letter-spacing: 2px; font-size: 15px; color: var(--dim); }
 .hud-pct { font-size: 52px; font-weight: 900; line-height: 1; }
 .hud-stocks { font-size: 20px; color: var(--accent2); letter-spacing: 4px; margin-top: 4px; }
+/* v0.23: combo badge — pops under the chip while a combo is live */
+.hud-combo { font-weight: 800; font-size: 17px; letter-spacing: 2px; margin-top: 2px;
+  text-shadow: 0 0 14px currentColor; }
+.hud-combo.pop { animation: combo-pop 0.28s ease-out; }
+@keyframes combo-pop {
+  0% { transform: scale(1.7); opacity: 0.5; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.hud-combo.hidden { display: none; }
 /* v0.9: compact chips when 3+ fighters share a side */
 .hud-side .hchip:nth-child(n+3) .hud-pct { font-size: 34px; }
 .hud-side .hchip:nth-child(n+3) .hud-name { font-size: 12px; }

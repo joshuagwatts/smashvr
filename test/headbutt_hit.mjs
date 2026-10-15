@@ -1,7 +1,7 @@
 /* headbutt connects: bruiser jab damages a foe in the sim */
 import { loadEngine, blankScene } from './_harness.mjs';
 const { THREE, createGame } = await loadEngine();
-const { FIGHTER_DEFS } = await import('../js/moves.js?v=29');
+const { FIGHTER_DEFS } = await import('../js/fighters.js');
 const scene = blankScene(THREE);
 FIGHTER_DEFS['test_mushy'] = {
   ...FIGHTER_DEFS.ronin, id: 'test_mushy', name: 'MUSHY', custom: true,

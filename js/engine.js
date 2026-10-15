@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=30';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=30';
-import { STRIKE_LIMB } from './moves.js?v=30';
+import { createFighter } from './fighters.js?v=31';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=31';
+import { STRIKE_LIMB } from './moves.js?v=31';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=30';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=30';
-import { Input } from './input.js?v=30';
-import { sfx } from './audio.js?v=30';
-import { mulberry32 } from './rng.js?v=30';
+} from './fx.js?v=31';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=31';
+import { Input } from './input.js?v=31';
+import { sfx } from './audio.js?v=31';
+import { mulberry32 } from './rng.js?v=31';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -37,6 +37,11 @@ const HURT_W = 1.0, HURT_H = 1.7; // hurtbox, feet-anchored (y = feet)
 // ---------------------------------------------------------------- helpers
 
 function setState(f, s) {
+  // v0.23: leaving hitstun for anything but hitstun/death = the victim
+  // recovered, so the attacker's combo ends.
+  if (f.state === 'hitstun' && s !== 'hitstun' && s !== 'dead' && f._comboBy) {
+    f._comboBy._combo = 0; f._comboBy = null;
+  }
   if (f.state !== s) { f.state = s; f.stateFrame = 0; }
 }
 
@@ -537,6 +542,8 @@ export function createGame(opts) {
         team: f.team, ctrl: f.ctrl, slot: f.slot, color: f._portColor,
         // v0.11: online player name for the HUD chip (null offline)
         pname: (this._netNames && this._netNames[f.ctrl]) || null,
+        // v0.23: combo counter for the HUD badge
+        combo: f._combo || 0,
       });
       // v0.9: HUD is a fighter array (main.js builds chips); p1/p2 kept for
       // the legacy 2-fighter shape.
@@ -824,6 +831,8 @@ function stepFighter(game, f, cur, foes) {
   f.stateFrame++;
   if (f.invuln > 0) f.invuln--;
   if (f._dropT > 0) f._dropT--;
+  // v0.23: combo timer — 90 ticks without a hit and the combo drops.
+  if (f._combo && game._tick - (f._comboTick || 0) > 90) f._combo = 0;
   if (f.hitPause > 0) { f.hitPause--; return; } // frozen — no physics
 
   // v0.3: shield press timing for teching/parry/spot-dodge (all states)
@@ -1564,6 +1573,15 @@ function stepAttack(game, f, e, foes) {
   if (f.onGround) f.vx *= 0.85; // grounded attacks root the fighter
   physics(game, f);
 
+  // v0.23: hit-cancel — a CONNECTED attack cancels its recovery into the next
+  // move (attack/smash/special). Whiffs play full recovery. The v0.14 input
+  // buffer carries the pressed edge into the next tick, so the chained move
+  // starts immediately — this is what makes combos flow.
+  if (f._hitSet.size > 0 && (e.attackP || e.smashP || e.specialP)) {
+    const lastActive = mv._lastActive || (mv._lastActive = Math.max(...mv.hits.map((h) => h.to)));
+    if (mf > lastActive) { endAttack(f); return; }
+  }
+
   if (f.moveFrame >= mv.total) {
     if (mv.special === 'rise' || mv.special === 'divegrab') setState(f, 'helpless');
     else endAttack(f);
@@ -1683,6 +1701,16 @@ function applyHit(game, att, def, hit, hx, hy) {
   const atkF = att.fighter && att.fighter.state === 'attack' ? att.fighter
     : game.fighters.find((x) => x.theme === att.theme && x.state === 'attack');
   if (atkF) atkF.hitPause = hp;
+  // v0.23: combo counter — consecutive clean hits by one attacker. Continues
+  // if the last hit landed <90 ticks ago, else starts fresh at 1. The victim
+  // tracks who is comboing them (broken on recovery via setState); getting
+  // hit breaks your own combo as an attacker.
+  if (atkF && atkF !== def) {
+    atkF._combo = (game._tick - (atkF._comboTick || -1e9) < 90) ? (atkF._combo || 0) + 1 : 1;
+    atkF._comboTick = game._tick;
+    def._comboBy = atkF;
+  }
+  def._combo = 0; def._comboTick = -1e9;
   if (koBlow) {
     game._koFx = { t: 0, dur: 46, x: def.x, y: def.y };
     game._vignT = 22; // v0.4: white vignette pulse on the KO blow

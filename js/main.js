@@ -2,22 +2,22 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=30';
-import { Input } from './input.js?v=30';
-import { sfx } from './audio.js?v=30';
-import { createFighter } from './fighters.js?v=30';
-import { FIGHTER_DEFS } from './moves.js?v=30';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=30';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=30';
-import { openLab } from './lab.js?v=30';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=30';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=30';
+import { createGame } from './engine.js?v=31';
+import { Input } from './input.js?v=31';
+import { sfx } from './audio.js?v=31';
+import { createFighter } from './fighters.js?v=31';
+import { FIGHTER_DEFS } from './moves.js?v=31';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=31';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=31';
+import { openLab } from './lab.js?v=31';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=31';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=31';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=30';
+} from './campaign.js?v=31';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=30';
+} from './netplay.js?v=31';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -597,6 +597,10 @@ function leaveLobby() {
 
 // ------------------------------------------------------------ game lifecycle
 
+// v0.23: last shown combo count per slot — the HUD badge only updates (and
+// pops) when the count changes, not on every tick's chip rebuild.
+const _comboShown = {};
+const _comboEl = {};
 function renderHud(s) {
   // v0.9: fighter chips — left = red team (or slot 0 in FFA), right = blue
   // team (or the rest). 1v1 FFA reproduces the old P1-left/P2-right look.
@@ -612,7 +616,8 @@ function renderHud(s) {
     const ctrlTag = f.ctrl === 'cpu' ? 'CPU' : (f.pname || f.ctrl.toUpperCase());
     d.innerHTML = `<div class="hud-name" style="color:${f.color}">${f.name} · ${ctrlTag}</div>
       <div class="hud-pct" style="color:${f.color}">${Math.floor(f.percent)}%</div>
-      <div class="hud-stocks">${'●'.repeat(Math.max(0, f.stocks))}</div>`;
+      <div class="hud-stocks">${'●'.repeat(Math.max(0, f.stocks))}</div>
+      <div class="hud-combo" id="combo-${f.slot}"></div>`;
     return d;
   };
   const leftFs = teamMode ? fs.filter((f) => f.team === 'red') : fs.slice(0, 1);
@@ -629,6 +634,33 @@ function renderHud(s) {
     right.appendChild(h);
   }
   rightFs.forEach((f) => right.appendChild(chip(f)));
+  // v0.23: combo badges — the chips rebuild every tick via innerHTML, which
+  // destroys the badge element. Track the element object: if it's a fresh
+  // element, re-apply the text silently; the pop animation only plays when
+  // the COUNT changes on a live element.
+  for (const f of fs) {
+    const el = document.getElementById(`combo-${f.slot}`);
+    if (!el) continue;
+    const n = f.combo >= 2 ? f.combo : 0;
+    const isNewEl = _comboEl[f.slot] !== el;
+    if (_comboShown[f.slot] !== n || isNewEl) {
+      _comboShown[f.slot] = n;
+      _comboEl[f.slot] = el;
+      if (n >= 2) {
+        el.textContent = `${n} HITS`;
+        el.style.color = f.color;
+        el.classList.remove('hidden');
+        if (!isNewEl) {
+          el.classList.remove('pop');
+          void el.offsetWidth; // reflow retriggers the animation
+          el.classList.add('pop');
+        }
+      } else {
+        el.classList.add('hidden');
+        el.classList.remove('pop');
+      }
+    }
+  }
   const t = s.time;
   $('hud-timer').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
   const cd = $('hud-countdown');

@@ -1,8 +1,10 @@
 /* headbutt overlay: customs with style.headbutts get bruiser jab/fsmash */
 import { loadEngine } from './_harness.mjs';
 const { THREE } = await loadEngine();
-const { FIGHTER_DEFS, MOVES, STRIKE_LIMB } = await import('../js/moves.js?v=29');
-const { createFighter } = await import('../js/fighters.js');
+// v0.23: FIGHTER_DEFS must be the live instance fighters.js uses (re-exported);
+// MOVES/STRIKE_LIMB are read-only here so any identical instance works.
+const { FIGHTER_DEFS, createFighter } = await import('../js/fighters.js');
+const { MOVES, STRIKE_LIMB } = await import('../js/moves.js');
 
 let pass = 0, fail = 0;
 const check = (n, c, x = '') => { c ? pass++ : fail++; console.log((c ? 'ok' : 'FAIL') + ' - ' + n + (x && !c ? ' — ' + x : '')); };
