@@ -1,15 +1,6 @@
-// test/vrm_rest.mjs — v0.6.1 VRM rest-pose fix.
-// A real VRM's bones (esp. head/neck) have NON-identity rest orientations
-// after resetNormalizedPose(). applyPose must compose keyframes as
-// rest * delta, never an absolute overwrite (the old absolute set() showed
-// up as a constant head twist on Joshua's imported VRM).
-//
-// Verifies with a mock bone chain:
-//  1. head bone with 30° yaw rest + head-turn pose -> world quat == rest*delta
-//  2. NOT delta alone (the old buggy behavior)
-//  3. NOT double-applied (rest*rest*delta)
-//  4. procedural rig path unchanged (raw euler passed straight through)
-//  5. identity-rest VRM (auto-rig adapter) behaves exactly like the old code
+// test/vrm_rest.mjs — v0.13 VRM animation via procedural world-copy.
+// VRM bones copy their procedural counterpart's WORLD orientation, so VRMs
+// move exactly like the built-in fighters. No delta math, no rest caches.
 
 import { promises as fs } from 'fs';
 import os from 'os';
@@ -28,131 +19,82 @@ async function stage() {
   });
   await rw(path.join(ROOT, 'js/rig.js'), path.join(STAGE, 'rig.js'));
   await rw(path.join(ROOT, 'js/budget.js'), path.join(STAGE, 'budget.js'));
-  await rw(path.join(ROOT, 'js/moves.js'), path.join(STAGE, 'moves.js'), [
-    ["from './budget.js'", `from '${path.join(STAGE, 'budget.js')}'`],
-  ]);
-  await rw(path.join(ROOT, 'js/anim.js'), path.join(STAGE, 'anim.js'), [
-    ["from './rig.js'", `from '${path.join(STAGE, 'rig.js')}'`],
-    ["from './moves.js'", `from '${path.join(STAGE, 'moves.js')}'`],
-  ]);
+  await rw(path.join(ROOT, 'js/moves.js'), path.join(STAGE, 'moves.js'));
+  await rw(path.join(ROOT, 'js/anim.js'), path.join(STAGE, 'anim.js'));
+  return STAGE;
 }
-
-await stage();
-const THREE = await import(THREE_ABS);
-const { applyPose } = await import(path.join(STAGE, 'anim.js'));
-const { VRM_BONE_MAP } = await import(path.join(STAGE, 'rig.js'));
 
 let pass = 0, fail = 0;
-const ok = (name, cond, extra = '') => {
+function ok(name, cond, extra = '') {
   if (cond) { pass++; console.log(`ok - ${name}`); }
-  else { fail++; console.log(`FAIL - ${name}${extra ? ' — ' + extra : ''}`); }
-};
-const quatAngle = (a, b) => {
-  // angle between two quaternions in radians
-  const dot = Math.abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+  else { fail++; console.log(`FAIL - ${name} ${extra}`); }
+}
+function quatAngle(a, b) {
+  const dot = Math.abs(a.dot(b));
   return 2 * Math.acos(Math.min(1, dot));
-};
+}
 
-// ---- mock VRM humanoid: chest (identity rest) -> head (30° yaw rest) ----
-function mockHumanoid(headRestEuler) {
-  const chest = new THREE.Bone();
-  const head = new THREE.Bone();
-  const restQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...headRestEuler));
-  head.quaternion.copy(restQ);
-  chest.add(head);
-  chest.updateMatrixWorld(true);
-  const nodes = { chest, head };
-  return {
-    nodes,
-    restQ: restQ.clone(),
+const THREE = await import(THREE_ABS);
+const STG = await stage();
+const { applyPose } = await import(path.join(STG, 'anim.js'));
+const { BONE_NAMES } = await import(path.join(STG, 'rig.js'));
+
+// Mock: procedural rig bone + VRM bone, both under a root.
+function mockFighter() {
+  const root = new THREE.Group();
+  // procedural rig
+  const rigGroup = new THREE.Group(); root.add(rigGroup);
+  const rigBones = {};
+  const hips = new THREE.Bone(); hips.name = 'hips'; rigGroup.add(hips); rigBones.hips = hips;
+  const chest = new THREE.Bone(); chest.name = 'chest'; chest.position.set(0, 0.5, 0); hips.add(chest); rigBones.chest = chest;
+  const head = new THREE.Bone(); head.name = 'head'; head.position.set(0, 0.5, 0); chest.add(head); rigBones.head = head;
+  // VRM scene (rotated +90° Y like the game does)
+  const scene = new THREE.Group(); scene.rotation.y = Math.PI / 2; root.add(scene);
+  const vHips = new THREE.Object3D(); vHips.name = 'hips'; scene.add(vHips);
+  const vChest = new THREE.Object3D(); vChest.name = 'chest'; vChest.position.set(0, 0.5, 0); vHips.add(vChest);
+  const vHead = new THREE.Object3D(); vHead.name = 'head'; vHead.position.set(0, 0.5, 0); vChest.add(vHead);
+  // give the VRM head a non-identity rest orientation (like a real VRM)
+  vHead.quaternion.setFromEuler(new THREE.Euler(0, Math.PI / 6, 0));
+  const humanoid = {
+    getNormalizedBoneNode: (n) => ({ hips: vHips, chest: vChest, head: vHead }[n] || null),
     resetNormalizedPose() {
-      head.quaternion.copy(restQ);
-      chest.quaternion.identity();
+      vHips.quaternion.identity(); vChest.quaternion.identity();
+      vHead.quaternion.setFromEuler(new THREE.Euler(0, Math.PI / 6, 0));
     },
-    getNormalizedBoneNode: (name) => nodes[name] || null,
+  };
+  root.updateMatrixWorld(true);
+  return {
+    root, rig: { group: rigGroup, bones: rigBones },
+    vrm: { vrm: { humanoid, scene } },
   };
 }
 
-const HEAD_REST = [0, Math.PI / 6, 0]; // 30° yaw — like a real VRM head bone
-const POSE_EULER = [0, 0, 0.5];        // head-turn keyframe from our pose data
-
-// ---- 1-3: rest * delta semantics on a non-identity rest ----
+// 1: VRM head world orientation matches procedural head world orientation.
 {
-  const humanoid = mockHumanoid(HEAD_REST);
-  const f = { vrm: { vrm: { humanoid } }, _vrmRest: null };
-  applyPose(f, { head: POSE_EULER });
-
-  const restQ = humanoid.restQ.clone();
-  const deltaQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...POSE_EULER));
-  // v0.12: the delta is authored in the fighter frame, so it pre-multiplies:
-  // world = delta * rest (not rest * delta). The head yaws 30° at rest, then
-  // nods in the fighter frame — a pure F-frame nod, not a nod about the
-  // already-yawed local axis.
-  const expectWorld = deltaQ.clone().multiply(restQ); // chest rest is identity
-
-  humanoid.nodes.chest.updateMatrixWorld(true);
-  const actualWorld = new THREE.Quaternion();
-  humanoid.nodes.head.getWorldQuaternion(actualWorld);
-
-  ok('world orientation == delta * rest (F-frame delta)', quatAngle(actualWorld, expectWorld) < 1e-6,
-    `angle=${quatAngle(actualWorld, expectWorld)}`);
-  ok('NOT the old absolute-overwrite behavior (delta alone)',
-    quatAngle(actualWorld, deltaQ) > 0.2, `angle=${quatAngle(actualWorld, deltaQ).toFixed(3)}`);
-  const doubleApplied = deltaQ.clone().multiply(restQ).multiply(restQ);
-  ok('NOT double-applied (delta*rest*rest)',
-    quatAngle(actualWorld, doubleApplied) > 0.2, `angle=${quatAngle(actualWorld, doubleApplied).toFixed(3)}`);
-  ok('rest cache captured once and reused',
-    !!f._vrmRest && f._vrmRest.head && quatAngle(f._vrmRest.head, restQ) < 1e-9);
-  // second frame: reset + re-apply must be stable (no drift/accumulation)
-  applyPose(f, { head: POSE_EULER });
-  humanoid.nodes.head.getWorldQuaternion(actualWorld);
-  ok('stable across frames (no accumulation)', quatAngle(actualWorld, expectWorld) < 1e-6);
+  const f = mockFighter();
+  applyPose(f, { head: [0, 0, 0.5] }); // head-turn
+  f.root.updateMatrixWorld(true);
+  const pq = new THREE.Quaternion(); f.rig.bones.head.getWorldQuaternion(pq);
+  const vq = new THREE.Quaternion();
+  f.vrm.vrm.humanoid.getNormalizedBoneNode('head').getWorldQuaternion(vq);
+  ok('VRM head world == procedural head world', quatAngle(pq, vq) < 1e-6,
+    `angle=${quatAngle(pq, vq)}`);
 }
 
-// ---- 4: procedural rig path unchanged ----
+// 2: procedural rig still posed (not broken by VRM path).
 {
-  const calls = {};
-  const rig = {
-    bones: {
-      head: { rotation: { set: (x, y, z) => { calls.head = [x, y, z]; } } },
-    },
-  };
-  applyPose({ rig }, { head: [0.1, 0.2, 0.3] });
-  ok('procedural path passes raw euler through',
-    calls.head && calls.head[0] === 0.1 && calls.head[1] === 0.2 && calls.head[2] === 0.3,
-    JSON.stringify(calls.head));
+  const f = mockFighter();
+  applyPose(f, { chest: [0, 0, 0.3] });
+  const e = new THREE.Euler().setFromQuaternion(f.rig.bones.chest.quaternion, 'XYZ');
+  ok('procedural chest posed', Math.abs(e.z - 0.3) < 1e-6, `z=${e.z}`);
 }
 
-// ---- 5: identity-rest VRM (auto-rig adapter) == old behavior ----
+// 3: VRM with no procedural rig bone (missing) is skipped safely.
 {
-  const humanoid = mockHumanoid([0, 0, 0]); // identity rest, like the autorig adapter
-  const f = { vrm: { vrm: { humanoid } }, _vrmRest: null };
-  applyPose(f, { head: POSE_EULER });
-  const deltaQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...POSE_EULER));
-  humanoid.nodes.chest.updateMatrixWorld(true);
-  const actualWorld = new THREE.Quaternion();
-  humanoid.nodes.head.getWorldQuaternion(actualWorld);
-  ok('identity rest: rest*delta === delta (no behavior change)',
-    quatAngle(actualWorld, deltaQ) < 1e-9);
-}
-
-// ---- 6: stale cache invalidated across models (simulates re-attach) ----
-{
-  const h1 = mockHumanoid([0, Math.PI / 6, 0]);
-  const f = { vrm: { vrm: { humanoid: h1 } }, _vrmRest: null };
-  applyPose(f, { head: POSE_EULER });
-  // swap model (vrm.js clears all caches on attach)
-  const h2 = mockHumanoid([0, -Math.PI / 4, 0]);
-  f.vrm.vrm.humanoid = h2;
-  f._vrmRest = null; f._vrmWrest = null; f._vrmSceneQ = null; f._vrmArmMap = null;
-  applyPose(f, { head: POSE_EULER });
-  const rest2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.PI / 4, 0));
-  const deltaQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...POSE_EULER));
-  const expectWorld = deltaQ.clone().multiply(rest2); // v0.12: delta * rest
-  h2.nodes.chest.updateMatrixWorld(true);
-  const actualWorld = new THREE.Quaternion();
-  h2.nodes.head.getWorldQuaternion(actualWorld);
-  ok('re-attach uses the NEW model rest quats', quatAngle(actualWorld, expectWorld) < 1e-6);
+  const f = mockFighter();
+  delete f.rig.bones.head;
+  applyPose(f, { head: [0, 0, 0.5] }); // should not throw
+  ok('missing procedural bone skipped', true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed.`);

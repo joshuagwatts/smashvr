@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=15';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=15';
-import { STRIKE_LIMB } from './moves.js?v=15';
+import { createFighter } from './fighters.js?v=17';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=17';
+import { STRIKE_LIMB } from './moves.js?v=17';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=15';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=15';
-import { Input } from './input.js?v=15';
-import { sfx } from './audio.js?v=15';
-import { mulberry32 } from './rng.js?v=15';
+} from './fx.js?v=17';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=17';
+import { Input } from './input.js?v=17';
+import { sfx } from './audio.js?v=17';
+import { mulberry32 } from './rng.js?v=17';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -109,10 +109,10 @@ function thinkAI(game, f, foe, a) {
   // v0.10: AI personalities for campaign "weird enemies" — probability table
   // plus movement style. No behavior fork: same thinkAI, tuned dials.
   const PERS = {
-    normal:  { atk: 0.34, smash: 0.48, special: 0.60, shield: 0.66, poke: 0.10 },
-    rusher:  { atk: 0.52, smash: 0.66, special: 0.72, shield: 0.74, poke: 0.16 },
-    camper:  { atk: 0.20, smash: 0.28, special: 0.60, shield: 0.70, poke: 0.38 },
-    spammer: { atk: 0.18, smash: 0.26, special: 0.62, shield: 0.66, poke: 0.34 },
+    normal:  { atk: 0.18, smash: 0.28, special: 0.36, shield: 0.44, poke: 0.05, cool: 20 },
+    rusher:  { atk: 0.52, smash: 0.66, special: 0.72, shield: 0.74, poke: 0.16, cool: 12 },
+    camper:  { atk: 0.20, smash: 0.28, special: 0.60, shield: 0.70, poke: 0.38, cool: 14 },
+    spammer: { atk: 0.18, smash: 0.26, special: 0.62, shield: 0.66, poke: 0.34, cool: 12 },
   };
   const P = PERS[f._aiPersonality] || PERS.normal;
   if (P === PERS.camper && adx < 4.5 && adx > 0.7) {
@@ -164,8 +164,11 @@ function thinkAI(game, f, foe, a) {
 function aiControl(game, f, foe) {
   const a = f._ai;
   let h;
+  // v0.13: per-personality decision interval (normal is slower/easier).
+  const PERS_COOL = { normal: 20, rusher: 12, camper: 14, spammer: 12 };
+  const cool = PERS_COOL[f._aiPersonality] || 12;
   if (a.cool > 0) { a.cool--; h = Object.assign({}, a.hold); }
-  else { a.cool = 12; h = thinkAI(game, f, foe, a); a.hold = h; }
+  else { a.cool = cool; h = thinkAI(game, f, foe, a); a.hold = h; }
   for (const k in a.tap) if (a.tap[k]) h[k] = true; // one-shot presses
   a.tap = {};
   if (a.shieldTap) { h.shield = true; a.shieldTap = false; } // v0.3: roll trigger

@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=15';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=15';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=17';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=17';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -432,8 +432,8 @@ export function applyPose(f, eulerDict) {
         if (!vrmBone || !procBone) continue;
         procBone.getWorldQuaternion(_q1);
         // Parent world: ancestors already posed (root-to-tip order).
-        vrmBone.parent.updateWorldMatrix(true, false);
-        _q2.setFromRotationMatrix(vrmBone.parent.matrixWorld);
+        // Use getWorldQuaternion (handles the scene scale correctly).
+        vrmBone.parent.getWorldQuaternion(_q2);
         vrmBone.quaternion.copy(_q2).invert().multiply(_q1);
       }
       f.vrm.vrm.scene.updateMatrixWorld(true);
