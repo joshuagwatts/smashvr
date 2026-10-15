@@ -122,8 +122,9 @@ export function analyzeVRM(vrm) {
   if (result.height < 1.2) result.size = 'small';
   else if (result.height > 1.8) result.size = 'large';
 
-  // Cartoon: big head + short stature = chibi.
-  result.cartoon = result.bigHead && result.size === 'small';
+  // Cartoon: big head + short stature = chibi; OR a huge head (>30%) is
+  // cartoony at any height (e.g. Mushy: 39% head, 1.89m tall).
+  result.cartoon = result.bigHead && (result.size === 'small' || result.headRatio > 0.30);
 
   return result;
 }
