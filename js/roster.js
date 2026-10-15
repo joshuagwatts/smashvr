@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=24';
-import { loadVRMFile } from './vrm.js?v=24';
+import { FIGHTER_DEFS } from './moves.js?v=25';
+import { loadVRMFile } from './vrm.js?v=25';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';

@@ -3,9 +3,9 @@
 // ('smashvr_theme_<defId>') from localStorage. Saved kit moves are rehydrated
 // to their canonical move records by id (falling back to the stored clone).
 
-import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=24';
-import { buildProceduralRig } from './rig.js?v=24';
-import { classBudget } from './budget.js?v=24';
+import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=25';
+import { buildProceduralRig } from './rig.js?v=25';
+import { classBudget } from './budget.js?v=25';
 import * as THREE from 'three';
 
 function loadJSON(key) {

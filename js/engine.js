@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=24';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=24';
-import { STRIKE_LIMB } from './moves.js?v=24';
+import { createFighter } from './fighters.js?v=25';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=25';
+import { STRIKE_LIMB } from './moves.js?v=25';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=24';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=24';
-import { Input } from './input.js?v=24';
-import { sfx } from './audio.js?v=24';
-import { mulberry32 } from './rng.js?v=24';
+} from './fx.js?v=25';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=25';
+import { Input } from './input.js?v=25';
+import { sfx } from './audio.js?v=25';
+import { mulberry32 } from './rng.js?v=25';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -686,10 +686,27 @@ function hoverBob(f) {
   return f.bodyType === 'floater' ? Math.sin((f._animT || 0) * 3.4) * 0.06 : 0;
 }
 
+// v0.18: squash & stretch — dynamic juice. squash(f, yScale, dur) sets a
+// vertical squash target; the horizontal compensates (volume preservation).
+// Called on land, jump, attack strike, and hit. syncRoot eases it.
+function squash(f, yTarget, dur) {
+  f._sqY = Math.max(0.7, Math.min(1.3, yTarget));
+  f._sqT = dur;
+}
 function syncRoot(f) {
   f.root.position.set(f.x, f.y + hoverBob(f), 0);
+  // v0.18: ease squash toward target, decay back to 1.
+  if (f._sqT > 0) {
+    f._sqT--;
+    f._sqCur = (f._sqCur || 1) + ((f._sqY || 1) - (f._sqCur || 1)) * 0.35;
+    if (f._sqT === 0) f._sqY = 1;
+  } else if (f._sqCur && Math.abs(f._sqCur - 1) > 0.001) {
+    f._sqCur += (1 - f._sqCur) * 0.25;
+  }
+  const sy = f._sqCur || 1;
+  const sxz = 1 / Math.sqrt(sy); // volume-preserving
   // v0.10: scale mods (giant/tiny campaign enemies) compose with facing.
-  f.root.scale.set(f._modScale * f.facing, f._modScale, f._modScale);
+  f.root.scale.set(f._modScale * f.facing * sxz, f._modScale * sy, f._modScale * sxz);
   if (f._portRing) f._portRing.position.set(f.x, 0.02, 0); // v0.3 colors: ring tracks fighter x/z
 }
 
@@ -932,11 +949,14 @@ function land(game, f, gy, plat) {
   // is canceled on its first tick (bug found 2026-10-13 in browser testing:
   // no grounded attack could ever execute).
   const wasAir = !f.onGround;
+  const landVy = f.vy; // v0.18: capture before zeroing for squash intensity
   f.y = gy; f.vy = 0;
   f.onGround = true; f._plat = plat || null;
   f.jumpsUsed = 0;
   f._canGrabLedge = true; // v0.3: re-arm the ledge grab on every landing
   if (f._ai) f._ai.usedUpB = false;
+  // v0.18: squash & stretch — land with a squash (impact), scale by fall speed.
+  if (wasAir) squash(f, Math.max(0.78, 1 + landVy * 1.2), 9);
   if (f.state === 'attack' && wasAir) endAttack(f); // aerial landing cancels
   else if (f.state === 'hitstun' && wasAir) {
     // v0.3 teching: shield pressed within 10 ticks of landing -> tech,
@@ -1396,6 +1416,7 @@ function stepSquat(game, f, e) {
     f.onGround = false; f._plat = null;
     f._fastFalling = false;
     setState(f, 'jump');
+    squash(f, 1.18, 7); // v0.18: stretch on jump takeoff
     sfx.jump();
   }
 }
@@ -1435,6 +1456,8 @@ function startAttack(f, id) {
   f._fired = false;
   f._lifts = 0;
   f._chargeMult = 1; // default; the charge release sets the real value after
+  // v0.18: stretch into the strike (snappy anticipation)
+  squash(f, 1.12, 6);
   sfx.whiff();
 }
 
@@ -1591,6 +1614,7 @@ function applyHit(game, att, def, hit, hx, hy) {
 
   // --- clean hit ---
   def.percent += effDmg;
+  squash(def, 0.86, 8); // v0.18: squash on being hit (impact)
 
   // v0.10: super armor (boss) — damage sticks, but no launch and no hitstun.
   if (def._superArmor) {
