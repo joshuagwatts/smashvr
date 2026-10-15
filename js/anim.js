@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=28';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=28';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=27';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=27';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -331,6 +331,90 @@ function locomotionPoseBiped(f, t) {
     }
   }
   return P;
+}
+
+function ensureVrmRest(f) {
+  const humanoid = f.vrm.vrm.humanoid;
+  if (f._vrmRest) return;
+  f._vrmRest = {};
+  for (const b of BONE_NAMES) {
+    const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+    f._vrmRest[b] = nd ? nd.quaternion.clone() : null;
+  }
+}
+
+// v0.12: frame-correct VRM retargeting ("plug the VRM protocol").
+// The game's pose dicts are authored in the FIGHTER frame F (+X = facing,
+// +Y = up) for the procedural rig, whose bone-local frames ARE F (identity
+// rests, no intermediate rotation) — so bone.rotation.set(e) just works.
+// A VRM's bones live under vrm.scene, which attachVRMToFighter rotates +90°
+// about Y (S) so the +Z-facing model faces +X. Bone-local frames are the
+// scene frame, NOT F. Applying F-authored Eulers directly rotates every
+// X/Z motion 90° off: jabs swing sideways/into the screen ("animations are
+// backward"), head nods become rolls about the facing axis ("head swings
+// sideways").
+//
+// Fix: interpret each delta in F, then convert to bone-local. With W_rest
+// = the bone's rest world orientation (F-relative) and P = the posed
+// F-relative orientation of the bone's parent,
+//     boneLocal = P⁻¹ · D_eff · W_rest
+// gives W_posed = D_eff · W_rest exactly — the bone rotates by the authored
+// deviation in the fighter frame, whatever the model's rest orientations.
+// W_rest is built from LOCAL quaternions only (scene → bone), so the
+// fighter root's facing mirror (scale.x = ±1) can never corrupt it.
+function ensureVrmFrames(f) {
+  const vrm = f.vrm.vrm;
+  const humanoid = vrm.humanoid, scene = vrm.scene || null;
+  ensureVrmRest(f);
+  if (f._vrmWrest && f._vrmSceneQ) return;
+  f._vrmSceneQ = scene ? scene.quaternion.clone() : new THREE.Quaternion();
+  f._vrmWrest = {};
+  f._vrmArmMap = {};
+  for (const b of BONE_NAMES) {
+    const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+    if (!nd) { f._vrmWrest[b] = null; continue; }
+    // F-relative rest world orientation from local quaternions only.
+    // (Called after resetNormalizedPose, so bone locals are rests.)
+    _parentW.identity();
+    for (let o = nd.parent; o && o !== scene; o = o.parent) _plink.unshift(o);
+    for (const o of _plink) _parentW.multiply(o.quaternion);
+    _plink.length = 0;
+    _parentW.multiply(nd.quaternion);
+    f._vrmWrest[b] = f._vrmSceneQ.clone().multiply(_parentW);
+  }
+  // v0.12: arm rest-direction normalization. The game's arm keyframes are
+  // authored for the procedural rest (arms hanging straight down, -Y in F).
+  // A VRM's arms rest wherever the artist put them (T-pose: ±Z in F), and a
+  // pure F-frame delta can't punch with a sideways arm (rotZ preserves Z —
+  // the jab would be invisible). So each arm bone gets M[b]: the minimal
+  // F-frame rotation taking its rest limb direction V0 to hanging (-Y).
+  // W_posed = D·M·W_rest: at rest the arms come down to a fighting stance,
+  // and every authored arm delta then works exactly as designed (fist goes
+  // where the procedural fist goes). This subsumes the v0.8 un-droop.
+  const armBones = ['upperArmL', 'lowerArmL', 'handL', 'upperArmR', 'lowerArmR', 'handR'];
+  const hangY = new THREE.Vector3(0, -1, 0);
+  for (const b of armBones) {
+    const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+    const Wrest = f._vrmWrest[b];
+    if (!nd || !Wrest) { f._vrmArmMap[b] = null; continue; }
+    // limb direction in bone-local: offset to the child joint (elbow/wrist).
+    // Hands have no child: inherit the forearm's normalization so the fist
+    // aligns with the forearm.
+    if (b.startsWith('hand')) {
+      const la = b === 'handL' ? 'lowerArmL' : 'lowerArmR';
+      const laM = f._vrmArmMap[la];
+      f._vrmArmMap[b] = laM ? { M: laM.M.clone(), v0local: null } : null;
+      continue;
+    }
+    const childName = b === 'upperArmL' ? 'lowerArmL' : b === 'upperArmR' ? 'lowerArmR'
+      : b === 'lowerArmL' ? 'handL' : 'handR';
+    const ch = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[childName]);
+    const ldir = ch ? ch.position.clone().normalize() : null;
+    if (!ldir || ldir.lengthSq() < 1e-8) { f._vrmArmMap[b] = null; continue; }
+    const V0 = ldir.clone().applyQuaternion(Wrest).normalize(); // F-frame rest limb dir
+    const M = new THREE.Quaternion().setFromUnitVectors(V0, hangY);
+    f._vrmArmMap[b] = { M, v0local: ldir.clone() };
+  }
 }
 
 export function applyPose(f, eulerDict) {

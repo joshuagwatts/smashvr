@@ -11,12 +11,12 @@
 // 'smashvr-kit' / 'smashvr-theme' ({defId, ...}) so the engine can live-update.
 
 import * as THREE from 'three';
-import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=28';
-import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=28';
-import { createFighter } from './fighters.js?v=28';
-import { tickFighterVisual, setFighterTheme } from './anim.js?v=28';
-import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=28';
-import { attachVRMToFighter } from './vrm.js?v=28';
+import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=27';
+import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=27';
+import { createFighter } from './fighters.js?v=27';
+import { tickFighterVisual, setFighterTheme } from './anim.js?v=27';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=27';
+import { attachVRMToFighter } from './vrm.js?v=27';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
