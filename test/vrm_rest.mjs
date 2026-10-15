@@ -69,16 +69,25 @@ function mockFighter() {
   };
 }
 
-// 1: VRM head world orientation matches procedural head world orientation.
+// 1: VRM head gets procedural's world DELTA applied to VRM rest.
+// (v0.13.2: VRM_world = VRM_rest_world · (Proc_rest⁻¹ · Proc_posed), NOT equal
+// to procedural world — preserves VRM's natural bone roll, no twists.)
 {
   const f = mockFighter();
+  // Capture VRM rest world before posing
+  f.vrm.vrm.humanoid.resetNormalizedPose();
+  f.vrm.vrm.scene.updateMatrixWorld(true);
+  const vrmRestW = new THREE.Quaternion();
+  f.vrm.vrm.humanoid.getNormalizedBoneNode('head').getWorldQuaternion(vrmRestW);
   applyPose(f, { head: [0, 0, 0.5] }); // head-turn
   f.root.updateMatrixWorld(true);
   const pq = new THREE.Quaternion(); f.rig.bones.head.getWorldQuaternion(pq);
+  // Procedural rest is identity, so D = pq. Expected: vrmRestW · pq.
+  const expected = vrmRestW.clone().multiply(pq);
   const vq = new THREE.Quaternion();
   f.vrm.vrm.humanoid.getNormalizedBoneNode('head').getWorldQuaternion(vq);
-  ok('VRM head world == procedural head world', quatAngle(pq, vq) < 1e-6,
-    `angle=${quatAngle(pq, vq)}`);
+  ok('VRM head world == vrmRest · procDelta (no twist)', quatAngle(expected, vq) < 1e-6,
+    `angle=${quatAngle(expected, vq)}`);
 }
 
 // 2: procedural rig still posed (not broken by VRM path).

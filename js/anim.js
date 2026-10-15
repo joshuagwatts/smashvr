@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=17';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=17';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=18';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=18';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -408,11 +408,10 @@ function ensureVrmFrames(f) {
 }
 
 export function applyPose(f, eulerDict) {
-  // v0.13: VRM animation is now DRIVEN BY the procedural rig. We pose the
-  // (hidden) procedural rig with the authored dict, then each VRM bone copies
-  // its procedural counterpart's WORLD orientation. This makes VRMs move
-  // exactly like Ronin/Volt — no delta retargeting, no rest-pose normalization,
-  // no frame math. Bone positions (proportions) stay the VRM's own.
+  // v0.13.2: VRM via WORLD-DELTA. Pose the procedural rig, then for each VRM
+  // bone: VRM_world = VRM_rest_world · (Proc_rest_world⁻¹ · Proc_posed_world).
+  // This applies the procedural's world-space rotation delta to the VRM's
+  // rest, preserving the VRM's natural bone roll (no twists).
   const doProcedural = () => {
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
@@ -420,24 +419,60 @@ export function applyPose(f, eulerDict) {
       f.rig.bones[b].rotation.set(e[0], e[1], e[2]);
     }
   };
+  // Procedural rest world quats (captured once per fighter; rig rest is fixed).
+  function procRestWorld() {
+    if (f._procRestW) return f._procRestW;
+    const saved = {};
+    for (const b of BONE_NAMES) {
+      if (!f.rig.bones[b]) continue;
+      saved[b] = f.rig.bones[b].quaternion.clone();
+      f.rig.bones[b].quaternion.identity();
+    }
+    f.rig.group.updateMatrixWorld(true);
+    const cache = {};
+    for (const b of BONE_NAMES) {
+      if (!f.rig.bones[b]) continue;
+      cache[b] = new THREE.Quaternion();
+      f.rig.bones[b].getWorldQuaternion(cache[b]);
+    }
+    for (const b of BONE_NAMES) {
+      if (saved[b]) f.rig.bones[b].quaternion.copy(saved[b]);
+    }
+    f._procRestW = cache;
+    return cache;
+  }
   if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
     const humanoid = f.vrm.vrm.humanoid;
+    if (!f.rig) return;
+    const procRest = procRestWorld();
+    // VRM rest world (after reset)
     humanoid.resetNormalizedPose();
-    if (f.rig) {
-      doProcedural();
-      f.rig.group.updateMatrixWorld(true);
-      for (const b of BONE_NAMES) {
-        const vrmBone = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
-        const procBone = f.rig.bones[b];
-        if (!vrmBone || !procBone) continue;
-        procBone.getWorldQuaternion(_q1);
-        // Parent world: ancestors already posed (root-to-tip order).
-        // Use getWorldQuaternion (handles the scene scale correctly).
-        vrmBone.parent.getWorldQuaternion(_q2);
-        vrmBone.quaternion.copy(_q2).invert().multiply(_q1);
-      }
-      f.vrm.vrm.scene.updateMatrixWorld(true);
+    f.vrm.vrm.scene.updateMatrixWorld(true);
+    const vrmRest = {};
+    for (const b of BONE_NAMES) {
+      const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+      if (!vb) continue;
+      vrmRest[b] = new THREE.Quaternion();
+      vb.getWorldQuaternion(vrmRest[b]);
     }
+    // Pose procedural
+    doProcedural();
+    f.rig.group.updateMatrixWorld(true);
+    // Apply world deltas
+    for (const b of BONE_NAMES) {
+      const vrmBone = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+      const procBone = f.rig.bones[b];
+      if (!vrmBone || !procBone || !procRest[b] || !vrmRest[b]) continue;
+      procBone.getWorldQuaternion(_q1); // proc posed world
+      // D = procRest⁻¹ · procPosed (world delta)
+      _q2.copy(procRest[b]).invert().multiply(_q1);
+      // VRM posed world = vrmRest · D
+      _q1.copy(vrmRest[b]).multiply(_q2);
+      // Convert to local
+      vrmBone.parent.getWorldQuaternion(_q2);
+      vrmBone.quaternion.copy(_q2).invert().multiply(_q1);
+    }
+    f.vrm.vrm.scene.updateMatrixWorld(true);
   } else if (f.rig) {
     doProcedural();
   }
