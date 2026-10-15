@@ -84,18 +84,22 @@ const POSE_EULER = [0, 0, 0.5];        // head-turn keyframe from our pose data
 
   const restQ = humanoid.restQ.clone();
   const deltaQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...POSE_EULER));
-  const expectWorld = restQ.clone().multiply(deltaQ); // chest rest is identity
+  // v0.12: the delta is authored in the fighter frame, so it pre-multiplies:
+  // world = delta * rest (not rest * delta). The head yaws 30° at rest, then
+  // nods in the fighter frame — a pure F-frame nod, not a nod about the
+  // already-yawed local axis.
+  const expectWorld = deltaQ.clone().multiply(restQ); // chest rest is identity
 
   humanoid.nodes.chest.updateMatrixWorld(true);
   const actualWorld = new THREE.Quaternion();
   humanoid.nodes.head.getWorldQuaternion(actualWorld);
 
-  ok('world orientation == rest * delta', quatAngle(actualWorld, expectWorld) < 1e-6,
+  ok('world orientation == delta * rest (F-frame delta)', quatAngle(actualWorld, expectWorld) < 1e-6,
     `angle=${quatAngle(actualWorld, expectWorld)}`);
   ok('NOT the old absolute-overwrite behavior (delta alone)',
     quatAngle(actualWorld, deltaQ) > 0.2, `angle=${quatAngle(actualWorld, deltaQ).toFixed(3)}`);
-  const doubleApplied = restQ.clone().multiply(restQ).multiply(deltaQ);
-  ok('NOT double-applied (rest*rest*delta)',
+  const doubleApplied = deltaQ.clone().multiply(restQ).multiply(restQ);
+  ok('NOT double-applied (delta*rest*rest)',
     quatAngle(actualWorld, doubleApplied) > 0.2, `angle=${quatAngle(actualWorld, doubleApplied).toFixed(3)}`);
   ok('rest cache captured once and reused',
     !!f._vrmRest && f._vrmRest.head && quatAngle(f._vrmRest.head, restQ) < 1e-9);
@@ -137,14 +141,14 @@ const POSE_EULER = [0, 0, 0.5];        // head-turn keyframe from our pose data
   const h1 = mockHumanoid([0, Math.PI / 6, 0]);
   const f = { vrm: { vrm: { humanoid: h1 } }, _vrmRest: null };
   applyPose(f, { head: POSE_EULER });
-  // swap model (vrm.js sets f._vrmRest = null on attach)
+  // swap model (vrm.js clears all caches on attach)
   const h2 = mockHumanoid([0, -Math.PI / 4, 0]);
   f.vrm.vrm.humanoid = h2;
-  f._vrmRest = null;
+  f._vrmRest = null; f._vrmWrest = null; f._vrmSceneQ = null; f._vrmArmMap = null;
   applyPose(f, { head: POSE_EULER });
   const rest2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.PI / 4, 0));
   const deltaQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...POSE_EULER));
-  const expectWorld = rest2.clone().multiply(deltaQ);
+  const expectWorld = deltaQ.clone().multiply(rest2); // v0.12: delta * rest
   h2.nodes.chest.updateMatrixWorld(true);
   const actualWorld = new THREE.Quaternion();
   h2.nodes.head.getWorldQuaternion(actualWorld);

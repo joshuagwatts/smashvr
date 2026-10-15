@@ -11,10 +11,9 @@ import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js';
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
 const _stw = new THREE.Vector3();
-// v0.8: A-pose compensation scratch — post-multiply the upper-arm delta by
-// the un-droop rotation (see applyPose).
-const _unDroop = new THREE.Quaternion();
-const _zAxis = new THREE.Vector3(0, 0, 1);
+// v0.12: frame-correct VRM retargeting scratch.
+const _parentW = new THREE.Quaternion();
+const _plink = [];
 
 const lerp = (a, b, u) => a + (b - a) * u;
 // v0.4: smoothstep easing for keyframe interpolation — poses accelerate out
@@ -332,42 +331,117 @@ function ensureVrmRest(f) {
   }
 }
 
+// v0.12: frame-correct VRM retargeting ("plug the VRM protocol").
+// The game's pose dicts are authored in the FIGHTER frame F (+X = facing,
+// +Y = up) for the procedural rig, whose bone-local frames ARE F (identity
+// rests, no intermediate rotation) — so bone.rotation.set(e) just works.
+// A VRM's bones live under vrm.scene, which attachVRMToFighter rotates +90°
+// about Y (S) so the +Z-facing model faces +X. Bone-local frames are the
+// scene frame, NOT F. Applying F-authored Eulers directly rotates every
+// X/Z motion 90° off: jabs swing sideways/into the screen ("animations are
+// backward"), head nods become rolls about the facing axis ("head swings
+// sideways").
+//
+// Fix: interpret each delta in F, then convert to bone-local. With W_rest
+// = the bone's rest world orientation (F-relative) and P = the posed
+// F-relative orientation of the bone's parent,
+//     boneLocal = P⁻¹ · D_eff · W_rest
+// gives W_posed = D_eff · W_rest exactly — the bone rotates by the authored
+// deviation in the fighter frame, whatever the model's rest orientations.
+// W_rest is built from LOCAL quaternions only (scene → bone), so the
+// fighter root's facing mirror (scale.x = ±1) can never corrupt it.
+function ensureVrmFrames(f) {
+  const vrm = f.vrm.vrm;
+  const humanoid = vrm.humanoid, scene = vrm.scene || null;
+  ensureVrmRest(f);
+  if (f._vrmWrest && f._vrmSceneQ) return;
+  f._vrmSceneQ = scene ? scene.quaternion.clone() : new THREE.Quaternion();
+  f._vrmWrest = {};
+  f._vrmArmMap = {};
+  for (const b of BONE_NAMES) {
+    const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+    if (!nd) { f._vrmWrest[b] = null; continue; }
+    // F-relative rest world orientation from local quaternions only.
+    // (Called after resetNormalizedPose, so bone locals are rests.)
+    _parentW.identity();
+    for (let o = nd.parent; o && o !== scene; o = o.parent) _plink.unshift(o);
+    for (const o of _plink) _parentW.multiply(o.quaternion);
+    _plink.length = 0;
+    _parentW.multiply(nd.quaternion);
+    f._vrmWrest[b] = f._vrmSceneQ.clone().multiply(_parentW);
+  }
+  // v0.12: arm rest-direction normalization. The game's arm keyframes are
+  // authored for the procedural rest (arms hanging straight down, -Y in F).
+  // A VRM's arms rest wherever the artist put them (T-pose: ±Z in F), and a
+  // pure F-frame delta can't punch with a sideways arm (rotZ preserves Z —
+  // the jab would be invisible). So each arm bone gets M[b]: the minimal
+  // F-frame rotation taking its rest limb direction V0 to hanging (-Y).
+  // W_posed = D·M·W_rest: at rest the arms come down to a fighting stance,
+  // and every authored arm delta then works exactly as designed (fist goes
+  // where the procedural fist goes). This subsumes the v0.8 un-droop.
+  const armBones = ['upperArmL', 'lowerArmL', 'handL', 'upperArmR', 'lowerArmR', 'handR'];
+  const hangY = new THREE.Vector3(0, -1, 0);
+  for (const b of armBones) {
+    const nd = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+    const Wrest = f._vrmWrest[b];
+    if (!nd || !Wrest) { f._vrmArmMap[b] = null; continue; }
+    // limb direction in bone-local: offset to the child joint (elbow/wrist).
+    // Hands have no child: inherit the forearm's normalization so the fist
+    // aligns with the forearm.
+    if (b.startsWith('hand')) {
+      const la = b === 'handL' ? 'lowerArmL' : 'lowerArmR';
+      const laM = f._vrmArmMap[la];
+      f._vrmArmMap[b] = laM ? { M: laM.M.clone(), v0local: null } : null;
+      continue;
+    }
+    const childName = b === 'upperArmL' ? 'lowerArmL' : b === 'upperArmR' ? 'lowerArmR'
+      : b === 'lowerArmL' ? 'handL' : 'handR';
+    const ch = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[childName]);
+    const ldir = ch ? ch.position.clone().normalize() : null;
+    if (!ldir || ldir.lengthSq() < 1e-8) { f._vrmArmMap[b] = null; continue; }
+    const V0 = ldir.clone().applyQuaternion(Wrest).normalize(); // F-frame rest limb dir
+    const M = new THREE.Quaternion().setFromUnitVectors(V0, hangY);
+    f._vrmArmMap[b] = { M, v0local: ldir.clone() };
+  }
+}
+
 export function applyPose(f, eulerDict) {
   if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
     const humanoid = f.vrm.vrm.humanoid;
+    const scene = f.vrm.vrm.scene || null;
     humanoid.resetNormalizedPose();
     // v0.6.1: VRM bones — especially head/neck — have NON-identity rest
-    // orientations after resetNormalizedPose() (three-vrm restores the
-    // model's normalized rest pose, not identity). Our keyframes are deltas
-    // from rest, so capture each bone's rest quaternion once and apply
-    // rest * delta. The old absolute setFromEuler() wiped the rest pose and
-    // showed up as a constant twist, most visibly on the head. For
-    // identity-rest rigs (procedural, auto-rigged) rest*delta === delta,
-    // so their behavior is unchanged.
-    ensureVrmRest(f);
-    // v0.8: A-pose compensation. Auto-rigged characters record per-side arm
-    // droop (radians below horizontal) on the pseudo-VRM. The game's
-    // keyframes are authored for T-pose rests; post-multiplying the upper-arm
-    // delta by the un-droop rotation makes an A-pose import strike/idle
-    // exactly like the procedural rig instead of punching droop-degrees off.
-    // Real VRMs carry no droop record and are untouched.
-    const droop = (f.vrm && f.vrm.vrm && f.vrm.vrm.droop) || null;
+    // orientations after resetNormalizedPose(). Deltas layer onto rest via
+    // the frame-correct mapping below (v0.12), which subsumes rest*delta.
+    ensureVrmFrames(f);
+    const SQ = f._vrmSceneQ;
+    const armMap = f._vrmArmMap || {};
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
       if (!e) continue;
       const node = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
-      const rest = f._vrmRest[b];
-      if (!node || !rest) continue; // optional bones may be missing
-      _delta.setFromEuler(_euler.set(e[0], e[1], e[2]));
-      if (droop && (b === 'upperArmL' || b === 'upperArmR')) {
-        const side = b === 'upperArmL' ? 'L' : 'R';
-        const d = droop[side] || 0;
-        if (d > 1e-4) {
-          _unDroop.setFromAxisAngle(_zAxis, (side === 'L' ? 1 : -1) * d);
-          _delta.multiply(_unDroop);
-        }
+      const Wrest = f._vrmWrest[b];
+      if (!node || !Wrest) continue; // optional bones may be missing
+      _delta.setFromEuler(_euler.set(e[0], e[1], e[2])); // authored, F-frame
+      // v0.12: arm bones normalize their rest limb direction to hanging
+      // (M), so authored arm deltas work as designed. W_posed = D·M·W_rest.
+      const am = armMap[b];
+      if (am && am.M) _delta.multiply(am.M);
+      // P = posed F-relative orientation of the bone's parent: S, then down
+      // the live (already-posed, root-to-tip) local chain. If there's no
+      // scene (test mock), walk to the top.
+      _parentW.copy(SQ);
+      _plink.length = 0;
+      let o = node.parent, hitScene = false;
+      while (o) {
+        if (o === scene) { hitScene = true; break; }
+        _plink.unshift(o); o = o.parent;
       }
-      node.quaternion.copy(rest).multiply(_delta);
+      if (scene && !hitScene) { _plink.length = 0; continue; } // malformed: skip
+      for (const p of _plink) _parentW.multiply(p.quaternion);
+      _plink.length = 0;
+      // boneLocal = P⁻¹ · D_eff · W_rest  →  W_posed = D_eff · W_rest (exact)
+      node.quaternion.copy(_parentW).invert().multiply(_delta).multiply(Wrest);
     }
   } else if (f.rig) {
     for (const b of BONE_NAMES) {

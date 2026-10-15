@@ -62,6 +62,7 @@ if (typeof FileReader === 'undefined') {
 }
 const { autoRigScene } = await import(path.join(STAGE, 'autorig.js'));
 const { applyPose, locomotionPose } = await import(path.join(STAGE, 'anim.js'));
+const { POSES } = await import(path.join(STAGE, 'moves.js'));
 const { GLTFLoader } = await import(path.join(STAGE, 'addons/loaders/GLTFLoader.js'));
 const { GLTFExporter } = await import(path.join(STAGE, 'addons/exporters/GLTFExporter.js'));
 
@@ -378,11 +379,13 @@ for (const deg of [30, 45, 60]) {
     !rec2.autorig.warnings.some((w) => /off vertical/.test(w)), rec2.autorig.warnings.join('; '));
 }
 
-// ================= v0.8: rest×delta contract =================
-// The game's keyframes are authored for T-pose rests. Auto-rigged characters
-// carry per-side droop on the pseudo-VRM; applyPose compensates the upper-arm
-// delta so an A-pose import idles/strikes like the procedural rig instead of
-// punching droop-degrees off. Rest stays identity (detected pose = neutral).
+// ================= v0.12: arm normalization =================
+// v0.12 replaces the v0.8 un-droop with arm rest-direction normalization:
+// each arm bone gets M (minimal rotation from its rest limb dir to hanging),
+// so W_posed = D·M·W_rest. Arms come down to the procedural fighting stance
+// at rest, and every authored arm delta works as designed (fist goes where
+// the procedural fist goes). Frame-correct retargeting (W = D·W_rest) covers
+// legs/spine/head, whose rest directions already match.
 function idleArmBelowHoriz(rec) {
   const f = { vrm: { vrm: rec.vrm, vrm0: false }, bodyType: 'biped' };
   rec.vrm.scene.updateMatrixWorld(true);
@@ -392,20 +395,38 @@ function idleArmBelowHoriz(rec) {
   const { dir } = armSegDir(rec, 'R');
   return belowHorizDeg(dir);
 }
+function jabFistDirF(rec) {
+  const f = { vrm: { vrm: rec.vrm, vrm0: false }, bodyType: 'biped' };
+  rec.vrm.scene.updateMatrixWorld(true);
+  applyPose(f, POSES.JAB_R);
+  rec.vrm.scene.updateMatrixWorld(true);
+  const hr = rec.vrm.humanoid.getNormalizedBoneNode('rightHand');
+  const ur = rec.vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+  const hp = new THREE.Vector3(), sp = new THREE.Vector3();
+  hr.getWorldPosition(hp); ur.getWorldPosition(sp);
+  // No scene rotation in the test harness (game adds rotY90 at attach);
+  // assert the fist goes where the F-frame delta points, in scene frame.
+  return hp.sub(sp).normalize();
+}
 {
   const gltf = await roundTrip(buildCharacter(45));
   const rec = autoRigScene(gltf.scene);
   const deg = idleArmBelowHoriz(rec);
-  // compensated: 45° ray + (60° idle delta − 45° droop) − ~12° (spine+chest) ≈ 49°
-  ok('v0.8 rest×delta: A-45° idle arm within 10° of the A ray', Math.abs(deg - 45) <= 10, deg.toFixed(1) + '°');
-  ok('v0.8 rest×delta: A-45° idle arm not snapped toward horizontal', deg > 25, deg.toFixed(1) + '°');
+  // A-45° arms normalize to the procedural fighting stance: NEUTRAL's
+  // upperArmR [0,0,1.05] on a hanging arm = 30° below horizontal.
+  ok('v0.12 arm norm: A-45° idle arm matches procedural stance', Math.abs(deg - 30) <= 12, deg.toFixed(1) + '°');
+  const fd = jabFistDirF(rec);
+  ok('v0.12 arm norm: A-45° jab fist goes forward (+X)', fd.x > 0.7 && Math.abs(fd.z) < 0.35,
+    `(${fd.x.toFixed(2)},${fd.y.toFixed(2)},${fd.z.toFixed(2)})`);
 }
 {
   const gltf = await roundTrip(buildCharacter(0));
   const rec = autoRigScene(gltf.scene);
   const deg = idleArmBelowHoriz(rec);
-  // T-pose: droop ≈ 0 → compensation is a no-op → same as the procedural rig
-  ok('v0.8 rest×delta: T idle arm unaffected by compensation', Math.abs(deg - 48.7) <= 5, deg.toFixed(1) + '°');
+  ok('v0.12 arm norm: T-pose idle arm matches procedural stance', Math.abs(deg - 30) <= 12, deg.toFixed(1) + '°');
+  const fd = jabFistDirF(rec);
+  ok('v0.12 arm norm: T-pose jab fist goes forward (+X)', fd.x > 0.7 && Math.abs(fd.z) < 0.35,
+    `(${fd.x.toFixed(2)},${fd.y.toFixed(2)},${fd.z.toFixed(2)})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed.`);

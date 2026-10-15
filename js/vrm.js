@@ -49,6 +49,7 @@ export function attachVRMToFighter(f, { vrm, vrm0 }) {
   f._isVRM = true; // procedural theme recolors must never touch a VRM model
   // v0.6.1: drop any cached rest-pose quaternions — a new model has new rests
   f._vrmRest = null;
+  f._vrmWrest = null; f._vrmSceneQ = null; f._vrmArmMap = null; // v0.12: frame caches too
 }
 
 export function removeVRMFromFighter(f) {
@@ -72,5 +73,6 @@ export function removeVRMFromFighter(f) {
   }
   f._isVRM = false;
   f._vrmRest = null; // v0.6.1: rest cache belongs to the removed model
+  f._vrmWrest = null; f._vrmSceneQ = null; f._vrmArmMap = null; // v0.12: frame caches too
   if (f.rig && f.rig.group) f.rig.group.visible = true;
 }
