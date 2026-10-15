@@ -3,7 +3,7 @@
 // (startup/active/total/damage/angle/KB) is recreated from public frame data.
 // Imports only budget.js (pure) — no three.js here.
 
-import { moveCost } from './budget.js?v=23';
+import { moveCost } from './budget.js?v=24';
 
 export const FIGHTER_DEFS = {
   ronin: {

@@ -2,21 +2,22 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=23';
-import { Input } from './input.js?v=23';
-import { sfx } from './audio.js?v=23';
-import { createFighter } from './fighters.js?v=23';
-import { FIGHTER_DEFS } from './moves.js?v=23';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=23';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=23';
-import { openLab } from './lab.js?v=23';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=23';
+import { createGame } from './engine.js?v=24';
+import { Input } from './input.js?v=24';
+import { sfx } from './audio.js?v=24';
+import { createFighter } from './fighters.js?v=24';
+import { FIGHTER_DEFS } from './moves.js?v=24';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=24';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=24';
+import { openLab } from './lab.js?v=24';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=24';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=24';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=23';
+} from './campaign.js?v=24';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=23';
+} from './netplay.js?v=24';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -149,9 +150,17 @@ function defCard(defId) {
   const customTag = def && def.custom ? ' · CUSTOM' : '';
   const c1 = f ? '#' + new THREE.Color(f.theme.primary).getHexString() : '#555';
   const c2 = f ? '#' + new THREE.Color(f.theme.secondary).getHexString() : '#777';
-  el.innerHTML = `<div class="fname">${def && def.custom ? def.name : defId.toUpperCase()}</div>
-    <div class="fclass">${cls}${bt}${customTag}</div>
-    <div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})${def && def.custom ? ';border:1px dashed #9aa3b2' : ''}"></div>`;
+  // v0.17: Smash-style portrait. Async — card renders with the swatch first,
+  // portrait swaps in when the offscreen render lands (cached after first).
+  const pname = def && def.custom ? def.name : defId.toUpperCase();
+  el.innerHTML = `<div class="fname">${pname}</div>
+    <div class="fportrait"><div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})${def && def.custom ? ';border:1px dashed #9aa3b2' : ''}"></div></div>
+    <div class="fclass">${cls}${bt}${customTag}</div>`;
+  getPortrait(defId).then((url) => {
+    if (!url || !el.isConnected) return;
+    const wrap = el.querySelector('.fportrait');
+    if (wrap) wrap.innerHTML = `<img src="${url}" alt="${pname}" draggable="false">`;
+  }).catch(() => {});
   el.addEventListener('click', () => {
     sfx.uiMove();
     slots[selSlot].def = defId;
@@ -237,6 +246,7 @@ function openSelect(m) {
     slots.forEach((s) => { if (!FIGHTER_DEFS[s.def]) s.def = 'ronin'; });
     refreshSelect();
     show('screen-select');
+    preRenderPortraits(); // v0.17: warm the portrait cache for the card grid
   });
 }
 

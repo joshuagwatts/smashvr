@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=23';
-import { loadVRMFile } from './vrm.js?v=23';
+import { FIGHTER_DEFS } from './moves.js?v=24';
+import { loadVRMFile } from './vrm.js?v=24';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -172,6 +172,14 @@ export async function setCustomFlip(defId, flip) {
   const entry = registry.get(defId);
   if (!entry) return;
   entry.flip = !!flip;
+  await idbPut(entry);
+}
+
+// v0.17: cached select-screen portrait (dataURL) for a custom import.
+export async function setCustomPortrait(defId, dataUrl) {
+  const entry = registry.get(defId);
+  if (!entry) return;
+  entry.portrait = dataUrl;
   await idbPut(entry);
 }
 
