@@ -11,11 +11,11 @@
 // 'smashvr-kit' / 'smashvr-theme' ({defId, ...}) so the engine can live-update.
 
 import * as THREE from 'three';
-import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=13';
-import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=13';
-import { createFighter } from './fighters.js?v=13';
-import { tickFighterVisual, setFighterTheme } from './anim.js?v=13';
-import { renameCustom, setCustomKit, deleteCustom, getCustomEntry } from './roster.js?v=13';
+import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=14';
+import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=14';
+import { createFighter } from './fighters.js?v=14';
+import { tickFighterVisual, setFighterTheme } from './anim.js?v=14';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip } from './roster.js?v=14';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
@@ -183,6 +183,24 @@ export function openLab(containerEl, onClose) {
   customRow.appendChild(nameInput);
   customRow.appendChild(renameBtn);
   customRow.appendChild(kitSel);
+  // v0.12.2: flip a backward-facing model. Takes effect on next fight.
+  const flipBtn = el('button', 'Flip: OFF');
+  css(flipBtn, { padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3a4157', background: '#232838', color: '#e8ecf4', fontSize: '12px' });
+  const syncFlipBtn = () => {
+    const en = getCustomEntry(defId);
+    flipBtn.textContent = en && en.flip ? 'Flip: ON' : 'Flip: OFF';
+    flipBtn.style.borderColor = en && en.flip ? '#7ab8ff' : '#3a4157';
+  };
+  flipBtn.onclick = async () => {
+    if (!FIGHTER_DEFS[defId].custom) return;
+    const en = getCustomEntry(defId);
+    await setCustomFlip(defId, !(en && en.flip));
+    syncFlipBtn();
+    say('Model flip ' + ((en && en.flip) ? 'OFF' : 'ON') + ' — takes effect next fight.', true);
+  };
+  // sync when the Lab opens / def changes
+  const _syncDef = syncFlipBtn;
+  customRow.appendChild(flipBtn);
   customRow.appendChild(delBtn);
   leftCol.appendChild(customRow);
 
@@ -206,7 +224,7 @@ export function openLab(containerEl, onClose) {
   function renderCustomRow() {
     const isC = !!(FIGHTER_DEFS[defId] && FIGHTER_DEFS[defId].custom);
     customRow.style.display = isC ? 'flex' : 'none';
-    if (isC) kitSel.value = FIGHTER_DEFS[defId].kit;
+    if (isC) { kitSel.value = FIGHTER_DEFS[defId].kit; _syncDef(); }
   }
 
   const classLine = el('div');

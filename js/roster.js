@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=13';
-import { loadVRMFile } from './vrm.js?v=13';
+import { FIGHTER_DEFS } from './moves.js?v=14';
+import { loadVRMFile } from './vrm.js?v=14';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -131,6 +131,8 @@ export async function importCharacter(file) {
     kit: existing ? existing.kit : 'ronin',
     blob: file,
     addedAt: existing ? existing.addedAt : Date.now(),
+    // v0.12.2: model faces backward in VRM space — flip its Y rotation.
+    flip: existing ? !!existing.flip : false,
   };
   await idbPut(rec);
   registerDef(rec);
@@ -162,6 +164,14 @@ export async function setCustomKit(defId, kit) {
   if (!entry || !FIGHTER_DEFS[kit] || FIGHTER_DEFS[kit].custom) return;
   entry.kit = kit;
   registerDef(entry);
+  await idbPut(entry);
+}
+
+// v0.12.2: flip a backward-facing model (toggles its Y rotation).
+export async function setCustomFlip(defId, flip) {
+  const entry = registry.get(defId);
+  if (!entry) return;
+  entry.flip = !!flip;
   await idbPut(entry);
 }
 

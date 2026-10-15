@@ -2,21 +2,21 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=13';
-import { Input } from './input.js?v=13';
-import { sfx } from './audio.js?v=13';
-import { createFighter } from './fighters.js?v=13';
-import { FIGHTER_DEFS } from './moves.js?v=13';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=13';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData } from './roster.js?v=13';
-import { openLab } from './lab.js?v=13';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=13';
+import { createGame } from './engine.js?v=14';
+import { Input } from './input.js?v=14';
+import { sfx } from './audio.js?v=14';
+import { createFighter } from './fighters.js?v=14';
+import { FIGHTER_DEFS } from './moves.js?v=14';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=14';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=14';
+import { openLab } from './lab.js?v=14';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=14';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=13';
+} from './campaign.js?v=14';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=13';
+} from './netplay.js?v=14';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -701,7 +701,8 @@ async function attachCustoms(g) {
     try {
       const data = await getCharacterData(f.defId);
       if (!f.root.parent) return; // fight was quit mid-load
-      attachVRMToFighter(f, data);
+      const entry = getCustomEntry(f.defId); // v0.12.2: per-model flip
+      attachVRMToFighter(f, { ...data, flip: !!entry?.flip });
       // imported body type drives hover locomotion — unless the Lab's manual
       // override for this def says otherwise (override wins, no re-import).
       const ov = readBodyTypeOverride(f.defId);

@@ -30,7 +30,7 @@ export async function loadVRMFile(file) {
   }
 }
 
-export function attachVRMToFighter(f, { vrm, vrm0 }) {
+export function attachVRMToFighter(f, { vrm, vrm0, flip }) {
   removeVRMFromFighter(f); // clean slate
   if (f.rig && f.rig.group) f.rig.group.visible = false;
 
@@ -41,7 +41,8 @@ export function attachVRMToFighter(f, { vrm, vrm0 }) {
   const h = size.y > 0 ? size.y : 1.7;
   const s = 1.7 / h;
   vrm.scene.scale.setScalar(s);
-  vrm.scene.rotation.y = Math.PI / 2; // VRM rest faces +Z -> face +X
+  // v0.12.2: flip turns a backward-authored model around (-90° instead of +90°).
+  vrm.scene.rotation.y = flip ? -Math.PI / 2 : Math.PI / 2; // VRM rest faces +Z -> face +X
   vrm.scene.position.set(0, -box.min.y * s, 0);
 
   f.root.add(vrm.scene);
