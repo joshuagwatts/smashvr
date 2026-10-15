@@ -3,7 +3,7 @@
 // (startup/active/total/damage/angle/KB) is recreated from public frame data.
 // Imports only budget.js (pure) — no three.js here.
 
-import { moveCost } from './budget.js?v=29';
+import { moveCost } from './budget.js?v=30';
 
 export const FIGHTER_DEFS = {
   ronin: {
@@ -86,6 +86,10 @@ for (const s of ['ftilt', 'fsmash', 'fair', 'bair', 'dair', 'dtilt', 'dspecial']
 }
 STRIKE_LIMB['wisp_uair'] = 'head';
 
+// v0.22: bruiser headbutts strike with the head bone (tracks VRM head too).
+STRIKE_LIMB['bruiser_jab'] = 'head';
+STRIKE_LIMB['bruiser_fsmash'] = 'head';
+
 // v0.7: floaters have no legs — their kick-family moves are body attacks.
 // Leg limbs redirect to the torso for hitbox generation (and the wisp anim
 // tracks are authored as body motions to match).
@@ -150,6 +154,26 @@ export const POSES = {
   WISP_DOWN: { // pitch down, body slams earthward
     hips: [0, 0, -0.15], spine: [0, 0, -0.6], chest: [0, 0, -0.5], head: [0, 0, -0.4],
     upperArmR: [0, 0, 2.4], upperArmL: [0, 0, -2.4],
+  },
+  // ---- v0.22: bruiser headbutt poses (big-head styles lead with the skull).
+  // Convention: +z = lean back, -z = crunch forward (fighter faces +X). ----
+  BUTT_WINDUP: { // rear the head back, coil — anticipation
+    head: [0, 0, 0.5], neck: [0, 0, 0.2],
+    spine: [0, 0, 0.25], chest: [0, 0, 0.18], hips: [0, 0, -0.12],
+    upperArmR: [0, 0, 0.6], lowerArmR: [0, 0, 1.3],
+    upperArmL: [0, 0, 0.6], lowerArmL: [0, 0, 1.3],
+    upperLegR: [0, 0, -0.3], lowerLegR: [0, 0, 0.6],
+    upperLegL: [0, 0, 0.25], lowerLegL: [0, 0, -0.15],
+  },
+  BUTT_SMASH: { // forehead drives forward — whole torso crunches into it.
+    // Head bone must TRANSLATE forward (it pivots in place when pitched),
+    // so the hips shift and the torso jackknifes over the front leg.
+    head: [0, 0, -0.6], neck: [0, 0, -0.25],
+    spine: [0, 0, -0.55], chest: [0, 0, -0.4], hips: [0.28, 0, 0.1],
+    upperArmR: [0, 0, 1.0], lowerArmR: [0, 0, 1.5],
+    upperArmL: [0, 0, 1.0], lowerArmL: [0, 0, 1.5],
+    upperLegR: [0, 0, 0.55], lowerLegR: [0, 0, -0.35],
+    upperLegL: [0, 0, -0.45], lowerLegL: [0, 0, 0.7],
   },
   KICK_R: {
     upperLegR: [0, 0, 1.5], lowerLegR: [0, 0, -0.15], footR: [0, 0, 0.5],
@@ -599,4 +623,23 @@ wisp.dtilt.anim = [K(0, 'NEUTRAL'), K(8 / 32, 'WISP_COIL'), K(9 / 32, 'WISP_LOWS
 wisp.dspecial.name = 'Dive Bomb';
 wisp.dspecial.anim = [K(0, 'NEUTRAL'), K(9 / 48, 'WISP_COIL'), K(10 / 48, 'WISP_DOWN'), K(26 / 48, 'WISP_DOWN'), K(1, 'NEUTRAL')];
 
-export const MOVES = { ronin, volt, wisp };
+// ---------------------------------------------------------------------------
+// v0.22: BRUISER — headbutt overlay kit for big-head styles (headbutts flag).
+// Not a standalone kit: fighters.js swaps jab/fsmash in over the style's base
+// kit. The Lab can also assign these moves manually (findMoveById searches all
+// of MOVES). Hitboxes track the head bone (STRIKE_LIMB 'head', like wisp_uair).
+// ---------------------------------------------------------------------------
+const bruiser = {
+  jab: mv('bruiser', 'jab', {
+    name: 'Headbutt', startup: 4, active: 5, total: 26, kbClass: 'weak', lunge: [0.14, 0],
+    hits: [H(0.35, 1.4, 0.85, 0.65, 7, 32, 28, 70, 4, 9)],
+    anim: [K(0, 'NEUTRAL'), K(3 / 26, 'BUTT_WINDUP'), K(4 / 26, 'BUTT_SMASH'), K(9 / 26, 'BUTT_SMASH'), K(1, 'NEUTRAL')],
+  }),
+  fsmash: mv('bruiser', 'fsmash', {
+    name: 'Skull Bash', startup: 13, active: 5, total: 52, kbClass: 'strong', lunge: [0.22, 0],
+    hits: [H(0.4, 1.35, 1.0, 0.8, 19, 28, 48, 110, 13, 18)],
+    anim: [K(0, 'NEUTRAL'), K(11 / 52, 'CROUCH'), K(12 / 52, 'BUTT_WINDUP'), K(13 / 52, 'BUTT_SMASH'), K(18 / 52, 'BUTT_SMASH'), K(1, 'NEUTRAL')],
+  }),
+};
+
+export const MOVES = { ronin, volt, wisp, bruiser };

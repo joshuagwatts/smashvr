@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=29';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=29';
-import { STRIKE_LIMB } from './moves.js?v=29';
+import { createFighter } from './fighters.js?v=30';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=30';
+import { STRIKE_LIMB } from './moves.js?v=30';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=29';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=29';
-import { Input } from './input.js?v=29';
-import { sfx } from './audio.js?v=29';
-import { mulberry32 } from './rng.js?v=29';
+} from './fx.js?v=30';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=30';
+import { Input } from './input.js?v=30';
+import { sfx } from './audio.js?v=30';
+import { mulberry32 } from './rng.js?v=30';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -1542,7 +1542,7 @@ function stepAttack(game, f, e, foes) {
     f.root.position.set(f.x, f.y + hoverBob(f), 0);
     f.root.scale.set(f._modScale * f.facing, f._modScale, f._modScale); // v0.10 scale mods
     poseStrikeSkeleton(f, attackPose(mv, mf));
-    const tip = strikeTip(f, STRIKE_LIMB[f.moveId], h);
+    const tip = strikeTip(f, STRIKE_LIMB[mv.id], h);
     // Bone unavailable (shouldn't happen on procedural rigs; VRM optionals):
     // fall back to the design anchor.
     const hx = tip ? tip.x : f.x + h.dx * f.facing;

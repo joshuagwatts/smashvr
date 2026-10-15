@@ -3,9 +3,9 @@
 // ('smashvr_theme_<defId>') from localStorage. Saved kit moves are rehydrated
 // to their canonical move records by id (falling back to the stored clone).
 
-import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=29';
-import { buildProceduralRig } from './rig.js?v=29';
-import { classBudget } from './budget.js?v=29';
+import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=30';
+import { buildProceduralRig } from './rig.js?v=30';
+import { classBudget } from './budget.js?v=30';
 import * as THREE from 'three';
 
 function loadJSON(key) {
@@ -56,7 +56,12 @@ export function createFighter(defId) {
   // Kit: native moveset overlaid with the saved lab kit.
   // v0.7: custom roster defs have no MOVES entry of their own — their native
   // kit is the kit def's moveset (default ronin, swappable in the Lab).
-  const nativeMoves = def.custom ? MOVES[def.kit] : MOVES[defId];
+  let nativeMoves = def.custom ? MOVES[def.kit] : MOVES[defId];
+  // v0.22: headbutt styles — big-head bruisers lead with the skull. Swapped in
+  // BEFORE the Lab's saved kit so a manual pick in the Lab still wins.
+  if (def.style && def.style.headbutts && MOVES.bruiser) {
+    nativeMoves = { ...nativeMoves, jab: MOVES.bruiser.jab, fsmash: MOVES.bruiser.fsmash };
+  }
   const savedKit = loadJSON('smashvr_kit_' + defId) || {};
   const moves = {};
   for (const slot of SLOTS) {
