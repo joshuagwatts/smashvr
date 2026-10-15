@@ -5,12 +5,14 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=14';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=14';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=15';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=15';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
 const _stw = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
 // v0.12: frame-correct VRM retargeting scratch.
 const _parentW = new THREE.Quaternion();
 const _plink = [];
@@ -406,53 +408,38 @@ function ensureVrmFrames(f) {
 }
 
 export function applyPose(f, eulerDict) {
-  if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
-    const humanoid = f.vrm.vrm.humanoid;
-    const scene = f.vrm.vrm.scene || null;
-    humanoid.resetNormalizedPose();
-    // v0.6.1: VRM bones — especially head/neck — have NON-identity rest
-    // orientations after resetNormalizedPose(). Deltas layer onto rest via
-    // the frame-correct mapping below (v0.12), which subsumes rest*delta.
-    ensureVrmFrames(f);
-    const SQ = f._vrmSceneQ;
-    const armMap = f._vrmArmMap || {};
-    for (const b of BONE_NAMES) {
-      const e = eulerDict[b];
-      const am = armMap[b];
-      // v0.12.1: arm bones apply M even with no delta — the rest pose itself
-      // is T-pose and must normalize to hanging, otherwise idle arms stick
-      // out sideways (UrbanTV bug).
-      if (!e && !(am && am.M)) continue;
-      const node = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
-      const Wrest = f._vrmWrest[b];
-      if (!node || !Wrest) continue; // optional bones may be missing
-      if (e) _delta.setFromEuler(_euler.set(e[0], e[1], e[2])); // authored, F-frame
-      else _delta.identity();
-      // v0.12: arm bones normalize their rest limb direction to hanging
-      // (M), so authored arm deltas work as designed. W_posed = D·M·W_rest.
-      if (am && am.M) _delta.multiply(am.M);
-      // P = posed F-relative orientation of the bone's parent: S, then down
-      // the live (already-posed, root-to-tip) local chain. If there's no
-      // scene (test mock), walk to the top.
-      _parentW.copy(SQ);
-      _plink.length = 0;
-      let o = node.parent, hitScene = false;
-      while (o) {
-        if (o === scene) { hitScene = true; break; }
-        _plink.unshift(o); o = o.parent;
-      }
-      if (scene && !hitScene) { _plink.length = 0; continue; } // malformed: skip
-      for (const p of _plink) _parentW.multiply(p.quaternion);
-      _plink.length = 0;
-      // boneLocal = P⁻¹ · D_eff · W_rest  →  W_posed = D_eff · W_rest (exact)
-      node.quaternion.copy(_parentW).invert().multiply(_delta).multiply(Wrest);
-    }
-  } else if (f.rig) {
+  // v0.13: VRM animation is now DRIVEN BY the procedural rig. We pose the
+  // (hidden) procedural rig with the authored dict, then each VRM bone copies
+  // its procedural counterpart's WORLD orientation. This makes VRMs move
+  // exactly like Ronin/Volt — no delta retargeting, no rest-pose normalization,
+  // no frame math. Bone positions (proportions) stay the VRM's own.
+  const doProcedural = () => {
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
       if (!e || !f.rig.bones[b]) continue;
       f.rig.bones[b].rotation.set(e[0], e[1], e[2]);
     }
+  };
+  if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
+    const humanoid = f.vrm.vrm.humanoid;
+    humanoid.resetNormalizedPose();
+    if (f.rig) {
+      doProcedural();
+      f.rig.group.updateMatrixWorld(true);
+      for (const b of BONE_NAMES) {
+        const vrmBone = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+        const procBone = f.rig.bones[b];
+        if (!vrmBone || !procBone) continue;
+        procBone.getWorldQuaternion(_q1);
+        // Parent world: ancestors already posed (root-to-tip order).
+        vrmBone.parent.updateWorldMatrix(true, false);
+        _q2.setFromRotationMatrix(vrmBone.parent.matrixWorld);
+        vrmBone.quaternion.copy(_q2).invert().multiply(_q1);
+      }
+      f.vrm.vrm.scene.updateMatrixWorld(true);
+    }
+  } else if (f.rig) {
+    doProcedural();
   }
 }
 

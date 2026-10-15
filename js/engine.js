@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=14';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=14';
-import { STRIKE_LIMB } from './moves.js?v=14';
+import { createFighter } from './fighters.js?v=15';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=15';
+import { STRIKE_LIMB } from './moves.js?v=15';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=14';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=14';
-import { Input } from './input.js?v=14';
-import { sfx } from './audio.js?v=14';
-import { mulberry32 } from './rng.js?v=14';
+} from './fx.js?v=15';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=15';
+import { Input } from './input.js?v=15';
+import { sfx } from './audio.js?v=15';
+import { mulberry32 } from './rng.js?v=15';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
