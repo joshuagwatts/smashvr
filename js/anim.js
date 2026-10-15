@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=18';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=18';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=19';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=19';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -464,10 +464,10 @@ export function applyPose(f, eulerDict) {
       const procBone = f.rig.bones[b];
       if (!vrmBone || !procBone || !procRest[b] || !vrmRest[b]) continue;
       procBone.getWorldQuaternion(_q1); // proc posed world
-      // D = procRest⁻¹ · procPosed (world delta)
+      // D = procRest⁻¹ · procPosed (world-space delta)
       _q2.copy(procRest[b]).invert().multiply(_q1);
-      // VRM posed world = vrmRest · D
-      _q1.copy(vrmRest[b]).multiply(_q2);
+      // VRM posed world = D · vrmRest (delta in WORLD frame, not local!)
+      _q1.copy(_q2).multiply(vrmRest[b]);
       // Convert to local
       vrmBone.parent.getWorldQuaternion(_q2);
       vrmBone.quaternion.copy(_q2).invert().multiply(_q1);
