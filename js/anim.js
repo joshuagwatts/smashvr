@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=19';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=19';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=20';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=20';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -413,10 +413,16 @@ export function applyPose(f, eulerDict) {
   // This applies the procedural's world-space rotation delta to the VRM's
   // rest, preserving the VRM's natural bone roll (no twists).
   const doProcedural = () => {
+    // v0.13.4: facing is a root mirror (scale.x = -1), which flips yaw.
+    // The torso blade (chest toward camera) must counter-mirror so you see
+    // the chest whether facing left or right — not the back.
+    const mirrorYaw = f.facing < 0;
+    const yawBones = { spine: 1, chest: 1, neck: 1, head: 1, hips: 1 };
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
       if (!e || !f.rig.bones[b]) continue;
-      f.rig.bones[b].rotation.set(e[0], e[1], e[2]);
+      if (mirrorYaw && yawBones[b]) f.rig.bones[b].rotation.set(e[0], -e[1], e[2]);
+      else f.rig.bones[b].rotation.set(e[0], e[1], e[2]);
     }
   };
   // Procedural rest world quats (captured once per fighter; rig rest is fixed).
