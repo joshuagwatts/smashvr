@@ -3,9 +3,9 @@
 // ('smashvr_theme_<defId>') from localStorage. Saved kit moves are rehydrated
 // to their canonical move records by id (falling back to the stored clone).
 
-import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=25';
-import { buildProceduralRig } from './rig.js?v=25';
-import { classBudget } from './budget.js?v=25';
+import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=26';
+import { buildProceduralRig } from './rig.js?v=26';
+import { classBudget } from './budget.js?v=26';
 import * as THREE from 'three';
 
 function loadJSON(key) {
@@ -88,6 +88,9 @@ export function createFighter(defId) {
     root,
     rig,
     vrm: null,
+
+    // v0.19: fighting style (customs) — drives squash & stretch intensity.
+    _squashMul: (def.style && def.style.squashMul) || 1,
 
     // v0.9: multiplayer identity — engine sets these from the slot config.
     team: null,   // 'red' | 'blue' | null (FFA)

@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=25';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=25';
-import { STRIKE_LIMB } from './moves.js?v=25';
+import { createFighter } from './fighters.js?v=26';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=26';
+import { STRIKE_LIMB } from './moves.js?v=26';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=25';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=25';
-import { Input } from './input.js?v=25';
-import { sfx } from './audio.js?v=25';
-import { mulberry32 } from './rng.js?v=25';
+} from './fx.js?v=26';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=26';
+import { Input } from './input.js?v=26';
+import { sfx } from './audio.js?v=26';
+import { mulberry32 } from './rng.js?v=26';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -689,8 +689,11 @@ function hoverBob(f) {
 // v0.18: squash & stretch — dynamic juice. squash(f, yScale, dur) sets a
 // vertical squash target; the horizontal compensates (volume preservation).
 // Called on land, jump, attack strike, and hit. syncRoot eases it.
+// v0.19: yTarget scales by the fighter's style squashMul (silly = bouncier).
 function squash(f, yTarget, dur) {
-  f._sqY = Math.max(0.7, Math.min(1.3, yTarget));
+  const mul = f._squashMul || 1;
+  const adj = 1 + (yTarget - 1) * mul;
+  f._sqY = Math.max(0.7, Math.min(1.3, adj));
   f._sqT = dur;
 }
 function syncRoot(f) {

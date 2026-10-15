@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=25';
-import { loadVRMFile } from './vrm.js?v=25';
+import { FIGHTER_DEFS } from './moves.js?v=26';
+import { loadVRMFile } from './vrm.js?v=26';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -82,6 +82,10 @@ function registerDef(rec) {
     kit: rec.kit,
     custom: true,
     theme: { primary: '#9aa3b2', secondary: '#4a5160' },
+    // v0.19: archetype + fighting style ride on the def for the Lab/engine.
+    archetype: rec.archetype || null,
+    style: rec.style || null,
+    styleOverride: rec.styleOverride || 'auto',
   };
   delete def.altTheme;
   FIGHTER_DEFS[rec.id] = def;
@@ -119,6 +123,16 @@ export async function importCharacter(file) {
   const id = 'custom_' + sanitize(file.name);
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   const existing = registry.get(id);
+  // v0.19: analyze the character and auto-assign a fighting style.
+  // Auto-rigged GLBs (data.autorig) skip VRM analysis — they get the default.
+  let archetype = null, style = null;
+  if (!data.autorig && data.vrm) {
+    try {
+      const { analyzeVRM, assignStyle } = await import('./archetype.js');
+      archetype = analyzeVRM(data.vrm);
+      style = assignStyle(archetype);
+    } catch (e) { /* analysis failed — default style */ }
+  }
   const rec = {
     id,
     name: existing ? existing.name : sanitize(file.name).toUpperCase(),
@@ -128,7 +142,11 @@ export async function importCharacter(file) {
       : ((data.autorig && data.autorig.bodyType) || 'biped'),
     // v0.8: detected import pose (T/A/unknown) for the Lab badge.
     pose: (data.autorig && data.autorig.pose) || null,
-    kit: existing ? existing.kit : 'ronin',
+    kit: existing ? existing.kit : (style ? style.kit : 'ronin'),
+    // v0.19: archetype + auto-assigned style.
+    archetype: archetype || existing?.archetype || null,
+    style: style || existing?.style || null,
+    styleOverride: existing?.styleOverride || 'auto',
     blob: file,
     addedAt: existing ? existing.addedAt : Date.now(),
     // v0.12.2: model faces backward in VRM space — flip its Y rotation.
@@ -137,7 +155,8 @@ export async function importCharacter(file) {
   await idbPut(rec);
   registerDef(rec);
   registry.get(id).data = data; // cache the just-loaded model
-  return { id, name: rec.name, updated: !!existing, bodyType: rec.bodyType, pose: rec.pose, sourceType: rec.sourceType };
+  return { id, name: rec.name, updated: !!existing, bodyType: rec.bodyType, pose: rec.pose, sourceType: rec.sourceType,
+           archetype: rec.archetype, style: rec.style };
 }
 
 // Loaded model data for a custom def, loading from the stored blob on demand.
@@ -180,6 +199,32 @@ export async function setCustomPortrait(defId, dataUrl) {
   const entry = registry.get(defId);
   if (!entry) return;
   entry.portrait = dataUrl;
+  await idbPut(entry);
+}
+
+// v0.19: override the auto-assigned fighting style ('auto' = use detection).
+export async function setCustomStyle(defId, styleName) {
+  const entry = registry.get(defId);
+  if (!entry) return;
+  entry.styleOverride = styleName;
+  // Apply the style's kit immediately.
+  const styles = {
+    brawler: { kit: 'ronin', style: 'brawler', headbutts: false, squashMul: 1.0, label: 'Brawler' },
+    valkyrie: { kit: 'volt', style: 'valkyrie', headbutts: false, squashMul: 1.0, label: 'Valkyrie' },
+    silly: { kit: 'wisp', style: 'silly', headbutts: true, squashMul: 1.6, label: 'Silly' },
+    bruiser: { kit: 'ronin', style: 'brawler', headbutts: true, squashMul: 1.2, label: 'Big-head bruiser' },
+  };
+  if (styleName !== 'auto' && styles[styleName]) {
+    entry.style = styles[styleName];
+    entry.kit = styles[styleName].kit;
+    registerDef(entry);
+  } else if (entry.archetype) {
+    // Revert to auto-detected.
+    const { assignStyle } = await import('./archetype.js');
+    entry.style = assignStyle(entry.archetype);
+    entry.kit = entry.style.kit;
+    registerDef(entry);
+  }
   await idbPut(entry);
 }
 

@@ -11,12 +11,12 @@
 // 'smashvr-kit' / 'smashvr-theme' ({defId, ...}) so the engine can live-update.
 
 import * as THREE from 'three';
-import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=25';
-import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=25';
-import { createFighter } from './fighters.js?v=25';
-import { tickFighterVisual, setFighterTheme } from './anim.js?v=25';
-import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData } from './roster.js?v=25';
-import { attachVRMToFighter } from './vrm.js?v=25';
+import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=26';
+import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=26';
+import { createFighter } from './fighters.js?v=26';
+import { tickFighterVisual, setFighterTheme } from './anim.js?v=26';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=26';
+import { attachVRMToFighter } from './vrm.js?v=26';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
@@ -264,6 +264,53 @@ export function openLab(containerEl, onClose) {
   btRow.appendChild(poseBadge);
   leftCol.appendChild(btRow);
 
+  // v0.19: fighting style row — auto-detected archetype + manual override.
+  // Only for customs; built-ins have fixed styles.
+  const styleRow = el('div');
+  css(styleRow, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', fontSize: '12px', color: '#9aa3b8' });
+  const styleBadge = el('span', '');
+  css(styleBadge, { padding: '3px 10px', borderRadius: '20px', fontWeight: '700', letterSpacing: '1px', fontSize: '11px',
+    background: '#ffb34733', color: '#ffcf8a', border: '1px solid #ffb347' });
+  const styleSel = document.createElement('select');
+  css(styleSel, { padding: '5px 8px', borderRadius: '6px', background: '#232838', color: '#e8ecf4', border: '1px solid #3a4157', fontSize: '12px' });
+  for (const [v, label] of [['auto', 'Auto'], ['brawler', 'Brawler'], ['valkyrie', 'Valkyrie'], ['silly', 'Silly'], ['bruiser', 'Bruiser']]) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    styleSel.appendChild(o);
+  }
+  styleSel.onchange = async () => {
+    await setCustomStyle(defId, styleSel.value);
+    renderStyle();
+    rebuildPreview();
+    say(styleSel.value === 'auto' ? 'Style: auto-detect.' : `Style overridden to ${styleSel.value} — applies on next fight.`, true);
+  };
+  styleRow.appendChild(el('span', 'Style:'));
+  styleRow.appendChild(styleBadge);
+  styleRow.appendChild(styleSel);
+  leftCol.appendChild(styleRow);
+
+  function renderStyle() {
+    const def = FIGHTER_DEFS[defId];
+    const isC = !!(def && def.custom);
+    styleRow.style.display = isC ? 'flex' : 'none';
+    if (!isC) return;
+    const entry = getCustomEntry(defId);
+    const ov = (entry && entry.styleOverride) || 'auto';
+    styleSel.value = ov;
+    const st = (def && def.style) || null;
+    const arch = (def && def.archetype) || null;
+    let label = st ? st.label : 'Brawler';
+    if (ov !== 'auto') label += ' (override)';
+    else if (arch) {
+      const bits = [];
+      if (arch.bigHead) bits.push(`big head ${(arch.headRatio * 100).toFixed(0)}%`);
+      if (arch.build !== 'neutral') bits.push(arch.build);
+      if (arch.cartoon) bits.push('cartoony');
+      if (bits.length) label += ` — ${bits.join(', ')}`;
+    }
+    styleBadge.textContent = label.toUpperCase();
+  }
+
   function effectiveBodyType() {
     const ov = loadJSON('smashvr_bodytype_' + defId, 'auto');
     return (ov === 'biped' || ov === 'floater') ? { type: ov, auto: false } : { type: FIGHTER_DEFS[defId].bodyType || 'biped', auto: true };
@@ -453,6 +500,7 @@ export function openLab(containerEl, onClose) {
       css(defBtns[d], { background: on ? '#3b82f6' : '#232838', borderColor: on ? '#3b82f6' : '#3a4157' });
     }
     renderBodyType();
+    renderStyle(); // v0.19
   }
 
   function renderAll() {
