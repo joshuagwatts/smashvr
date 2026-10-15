@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=27';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=27';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=28';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=28';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();

@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=27';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=27';
-import { STRIKE_LIMB } from './moves.js?v=27';
+import { createFighter } from './fighters.js?v=28';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=28';
+import { STRIKE_LIMB } from './moves.js?v=28';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=27';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=27';
-import { Input } from './input.js?v=27';
-import { sfx } from './audio.js?v=27';
-import { mulberry32 } from './rng.js?v=27';
+} from './fx.js?v=28';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=28';
+import { Input } from './input.js?v=28';
+import { sfx } from './audio.js?v=28';
+import { mulberry32 } from './rng.js?v=28';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -440,6 +440,29 @@ export function createGame(opts) {
       for (const f of fighters) {
         const foes = opponentsOf(this, f);
         stepFighter(this, f, inputFor(this, f, foes), foes);
+      }
+      // v0.21: body pushback — fighters are solid (Smash-like). Without this
+      // the CPU walks straight through P1 and they trade sides mid-fight,
+      // which reads as "P1 is on the wrong side". Positional, weight-split,
+      // deterministic (no RNG) so netplay/determinism stay green.
+      for (let bi = 0; bi < fighters.length; bi++) {
+        const a = fighters[bi];
+        if (a.state === 'dead' || a.state === 'respawn' || a.state === 'ledge') continue;
+        for (let bj = bi + 1; bj < fighters.length; bj++) {
+          const b = fighters[bj];
+          if (b.state === 'dead' || b.state === 'respawn' || b.state === 'ledge') continue;
+          if (a._victim === b || b._victim === a) continue; // grab hold pins close
+          if (Math.abs(a.y - b.y) > 1.2) continue; // different heights pass over
+          const minD = (a._hurtW + b._hurtW) * 0.45;
+          let dx = b.x - a.x;
+          if (Math.abs(dx) >= minD) continue;
+          if (dx === 0) dx = bi < bj ? -1e-4 : 1e-4; // stacked: deterministic split
+          const overlap = minD - Math.abs(dx);
+          const dir = dx > 0 ? 1 : -1;
+          const wa = a.weight || 100, wb = b.weight || 100, tot = wa + wb;
+          a.x -= dir * overlap * (wb / tot);
+          b.x += dir * overlap * (wa / tot);
+        }
       }
       stepProjectiles(this);
 
