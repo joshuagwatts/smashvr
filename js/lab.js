@@ -11,11 +11,12 @@
 // 'smashvr-kit' / 'smashvr-theme' ({defId, ...}) so the engine can live-update.
 
 import * as THREE from 'three';
-import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=22';
-import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=22';
-import { createFighter } from './fighters.js?v=22';
-import { tickFighterVisual, setFighterTheme } from './anim.js?v=22';
-import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip } from './roster.js?v=22';
+import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=23';
+import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=23';
+import { createFighter } from './fighters.js?v=23';
+import { tickFighterVisual, setFighterTheme } from './anim.js?v=23';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData } from './roster.js?v=23';
+import { attachVRMToFighter } from './vrm.js?v=23';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
@@ -408,6 +409,9 @@ export function openLab(containerEl, onClose) {
     renderer = null; // headless / no WebGL: lab still works, no preview
   }
 
+  // v0.16: Lab preview attaches the VRM for customs (was procedural rig only).
+  // Async load with a token so a mid-load def switch doesn't attach stale.
+  let previewToken = 0;
   function rebuildPreview() {
     if (!renderer) return;
     if (previewF && previewF.root.parent) previewF.root.parent.remove(previewF.root);
@@ -415,6 +419,15 @@ export function openLab(containerEl, onClose) {
     setFighterTheme(previewF, theme);
     previewF.state = 'idle';
     previewScene.add(previewF.root);
+    if (isCustom(defId)) {
+      const tok = ++previewToken;
+      const pf = previewF;
+      getCharacterData(defId).then((data) => {
+        if (tok !== previewToken || dead || pf !== previewF) return;
+        const entry = getCustomEntry(defId);
+        attachVRMToFighter(pf, { ...data, flip: !!entry?.flip });
+      }).catch(() => {});
+    }
   }
 
   function teardown() {

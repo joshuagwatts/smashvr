@@ -2,21 +2,21 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=22';
-import { Input } from './input.js?v=22';
-import { sfx } from './audio.js?v=22';
-import { createFighter } from './fighters.js?v=22';
-import { FIGHTER_DEFS } from './moves.js?v=22';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=22';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=22';
-import { openLab } from './lab.js?v=22';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=22';
+import { createGame } from './engine.js?v=23';
+import { Input } from './input.js?v=23';
+import { sfx } from './audio.js?v=23';
+import { createFighter } from './fighters.js?v=23';
+import { FIGHTER_DEFS } from './moves.js?v=23';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=23';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=23';
+import { openLab } from './lab.js?v=23';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=23';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=22';
+} from './campaign.js?v=23';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=22';
+} from './netplay.js?v=23';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);

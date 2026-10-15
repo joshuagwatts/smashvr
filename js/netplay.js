@@ -16,9 +16,9 @@
 //    verified over fake channels (test/netproto.mjs) and the signaling layer
 //    is verified as far as headless allows. Two real devices are ground truth.
 
-import { packInput, unpackInput, PACKED_BLANK, lobbyCode } from './rng.js?v=22';
-import { TICK, readHuman } from './engine.js?v=22';
-import { sfx } from './audio.js?v=22';
+import { packInput, unpackInput, PACKED_BLANK, lobbyCode } from './rng.js?v=23';
+import { TICK, readHuman } from './engine.js?v=23';
+import { sfx } from './audio.js?v=23';
 
 export const NET_DELAY = 3;       // input delay, ticks
 export const HASH_EVERY = 60;     // state-hash cadence, ticks
