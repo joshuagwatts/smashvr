@@ -1109,3 +1109,40 @@ Joshua: "i wanna be able to play my bros online."
 - 4-human cap; no pause; no rematch-from-results (back to lobby).
 - Audio never heard headless (standing); netcode CPU cost unmeasured on
   phones (0.27ms/tick desktop sim + resync replays).
+
+## v0.12 — frame-correct VRM retargeting (2026-10-14)
+
+**His report (verbatim):** "mushy animations are like backward and his head swings sideways not actually the way theyre supposed to be facing rn....super weird...." + "yeah the vrms arent even animated and theyre attacking towards the camera not left and right...." + "i feel like u should be able to plug vrm protocol pretty easy"
+
+**Root cause:** The game's pose dicts are authored in the fighter frame F (+X =
+facing) for the procedural rig, whose bone-local frames ARE F. A VRM's bones
+live under `vrm.scene`, rotated +90° about Y so the +Z-facing model faces +X —
+bone-local frames are the scene frame, not F. Applying F-authored Eulers
+directly rotated every X/Z motion 90° off: jabs swung toward ±Z (at the
+camera) instead of ±X ("attacking towards the camera not left and right"),
+head nods became rolls about the facing axis ("head swings sideways"). And
+for T-pose arms (mesh along ±Z in F), the jab's rotZ delta does nothing at
+all ("arent even animated").
+
+**Fix (js/anim.js):** proper humanoid retargeting — interpret each delta in F,
+convert to bone-local: `boneLocal = P⁻¹ · D_eff · W_rest` (P = posed parent
+world, W_rest = rest world, both F-relative from locals only — immune to the
+root's facing mirror), giving `W_posed = D_eff · W_rest` exactly. Arm bones
+additionally get M (minimal rotation from rest limb dir to hanging), so
+`W = D·M·W_rest`: arms come down to the procedural fighting stance and every
+authored arm delta works as designed. This subsumes the v0.8 un-droop (which
+only adjusted deltas and couldn't move Z-aligned arms). Also corrected
+v0.6.1's `rest·delta` to `delta·rest` (delta pre-multiplies — the F-frame
+interpretation).
+
+**Verified:**
+- Real Mushy.vrm, JAB_R: fist dir (F) = (0.80, −0.60, 0.00) — forward, zero
+  sideways (was (0, 0, −1)). Side-view screenshot: arm extends toward the
+  enemy. `/tmp/mushy-jab.png`.
+- Head nod [0,0,−0.5]: face tilts down (not sideways).
+- Node: autorig 74/74 (new v0.12 arm-norm tests), vrm_rest 8/8, determinism
+  6/6, team_battle PASS, hitbox_sync PASS, anim_phases PASS.
+- Browser: Mushy import → fight vs CPU, zero console/page errors.
+
+**Honest gaps:** Shoulder deformation on extreme T-pose→stance normalization is
+unjudged (Mushy's stubby arms fine); his eye is ground truth.
