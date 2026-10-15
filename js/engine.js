@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=31';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=31';
-import { STRIKE_LIMB } from './moves.js?v=31';
+import { createFighter } from './fighters.js?v=32';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=32';
+import { STRIKE_LIMB } from './moves.js?v=32';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=31';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=31';
-import { Input } from './input.js?v=31';
-import { sfx } from './audio.js?v=31';
-import { mulberry32 } from './rng.js?v=31';
+} from './fx.js?v=32';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=32';
+import { Input } from './input.js?v=32';
+import { sfx } from './audio.js?v=32';
+import { mulberry32 } from './rng.js?v=32';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -1577,9 +1577,11 @@ function stepAttack(game, f, e, foes) {
   // move (attack/smash/special). Whiffs play full recovery. The v0.14 input
   // buffer carries the pressed edge into the next tick, so the chained move
   // starts immediately — this is what makes combos flow.
+  // v0.24: jabs chain early (cancelFrom) for true jab strings.
   if (f._hitSet.size > 0 && (e.attackP || e.smashP || e.specialP)) {
     const lastActive = mv._lastActive || (mv._lastActive = Math.max(...mv.hits.map((h) => h.to)));
-    if (mf > lastActive) { endAttack(f); return; }
+    const cancelFrom = mv.cancelFrom || (lastActive + 1);
+    if (mf >= cancelFrom) { endAttack(f); return; }
   }
 
   if (f.moveFrame >= mv.total) {

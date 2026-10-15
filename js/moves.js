@@ -3,7 +3,7 @@
 // (startup/active/total/damage/angle/KB) is recreated from public frame data.
 // Imports only budget.js (pure) — no three.js here.
 
-import { moveCost } from './budget.js?v=31';
+import { moveCost } from './budget.js?v=32';
 
 export const FIGHTER_DEFS = {
   ronin: {
@@ -33,6 +33,15 @@ export const FIGHTER_DEFS = {
     theme: { primary: '#b9f3ff', secondary: '#5e7bff' },
     // v0.6 mirror match alt: deep violet + pale mist
     altTheme: { primary: '#8b5cf6', secondary: '#e6f9ff' },
+  },
+  // v0.24: BLITZ — rushdown. "Death by a thousand cuts." Fastest fighter on
+  // the roster, weakest hits, lives for the jab string and hit-cancel flow.
+  blitz: {
+    name: 'BLITZ', cls: 'light', bodyType: 'biped',
+    weight: 88, runSpeed: 0.17, airSpeed: 0.145, fallSpeed: 0.22, fastFall: 0.42,
+    jumpV: 0.235, djumpV: 0.21, traction: 0.65,
+    theme: { primary: '#f5d020', secondary: '#ff6b1a' },
+    altTheme: { primary: '#20f5d0', secondary: '#1a6bff' },
   },
 };
 
@@ -89,6 +98,9 @@ STRIKE_LIMB['wisp_uair'] = 'head';
 // v0.22: bruiser headbutts strike with the head bone (tracks VRM head too).
 STRIKE_LIMB['bruiser_jab'] = 'head';
 STRIKE_LIMB['bruiser_fsmash'] = 'head';
+
+// v0.24: blitz uses ronin limb mapping (cloned kit).
+for (const s of SLOTS) STRIKE_LIMB['blitz_' + s] = STRIKE_LIMB['ronin_' + s];
 
 // v0.7: floaters have no legs — their kick-family moves are body attacks.
 // Leg limbs redirect to the torso for hitbox generation (and the wisp anim
@@ -367,6 +379,9 @@ function mv(defId, slot, cfg) {
     projectile: cfg.projectile || null,
     special: cfg.special || null,
     anim: cfg.anim,
+    // v0.24: earliest frame a connected hit can cancel recovery (jab chains).
+    // Defaults to after the last active frame (see engine hit-cancel).
+    cancelFrom: cfg.cancelFrom || null,
   };
 }
 
@@ -377,6 +392,7 @@ function mv(defId, slot, cfg) {
 const ronin = {
   jab: mv('ronin', 'jab', {
     name: 'Jab Combo', startup: 3, active: 4, total: 22, kbClass: 'weak', lunge: [0.06, 0],
+    cancelFrom: 6, // v0.24: jabs chain — cancel into the next one right after the first hit
     hits: [
       H(0.85, 1.25, 0.7, 0.5, 2, 30, 20, 40, 3, 5),
       H(0.85, 1.25, 0.7, 0.5, 3, 40, 28, 60, 11, 13),
@@ -486,6 +502,7 @@ const ronin = {
 const volt = {
   jab: mv('volt', 'jab', {
     name: 'Volt Jab', startup: 4, active: 4, total: 24, kbClass: 'weak',
+    cancelFrom: 7, // v0.24: jabs chain
     hits: [
       H(0.8, 1.25, 0.7, 0.5, 3, 30, 20, 40, 4, 6),
       H(0.8, 1.25, 0.7, 0.5, 4, 40, 28, 60, 12, 14),
@@ -632,6 +649,7 @@ wisp.dspecial.anim = [K(0, 'NEUTRAL'), K(9 / 48, 'WISP_COIL'), K(10 / 48, 'WISP_
 const bruiser = {
   jab: mv('bruiser', 'jab', {
     name: 'Headbutt', startup: 4, active: 5, total: 26, kbClass: 'weak', lunge: [0.14, 0],
+    cancelFrom: 10, // v0.24: jabs chain
     hits: [H(0.35, 1.4, 0.85, 0.65, 7, 32, 28, 70, 4, 9)],
     anim: [K(0, 'NEUTRAL'), K(3 / 26, 'BUTT_WINDUP'), K(4 / 26, 'BUTT_SMASH'), K(9 / 26, 'BUTT_SMASH'), K(1, 'NEUTRAL')],
   }),
@@ -642,4 +660,65 @@ const bruiser = {
   }),
 };
 
-export const MOVES = { ronin, volt, wisp, bruiser };
+// ---------------------------------------------------------------------------
+// v0.24: BLITZ — rushdown kit. Cloned from ronin, retuned: -4 total, 0.7x
+// damage, 0.8x baseKB. Frame numbers SCALE with the new total (preserving the
+// move's rhythm), so the normalized anim tracks stay synced with the hits.
+// ---------------------------------------------------------------------------
+const blitz = {};
+for (const slot of SLOTS) {
+  const src = ronin[slot];
+  if (!src) continue;
+  // v0.24: spin moves (dsmash) keep ronin timing — the continuous hip rotation
+  // doesn't survive frame scaling (hitbox_sync).
+  if (slot === 'dsmash') {
+    blitz[slot] = { ...src, id: 'blitz_dsmash', hits: src.hits.map((h) => ({ ...h })) };
+    continue;
+  }
+  const newTotal = Math.max(10, src.total - 4);
+  const sc = newTotal / src.total;
+  const q = (f) => Math.max(1, Math.round(f * sc));
+  const newHits = src.hits.map((h) => ({
+    ...h,
+    from: q(h.from),
+    to: Math.max(q(h.from), q(h.to)),
+    dmg: Math.max(1, Math.round(h.dmg * 0.7)),
+    baseKB: h.baseKB * 0.8,
+  }));
+  // v0.24: deep-clone the anim. Strike keyframes must EXACTLY match the hit
+  // fractions (anim.js isStrike uses 1e-9) — remap any keyframe that sat on
+  // an old hit start to the new hit start.
+  const oldStrikeT = src.hits.map((h) => h.from / src.total);
+  const newStrikeT = newHits.map((h) => h.from / newTotal);
+  const anim = src.anim.map((k) => {
+    const idx = oldStrikeT.findIndex((st) => Math.abs(k.t - st) < 1e-9);
+    return { t: idx >= 0 ? newStrikeT[idx] : k.t, bones: { ...k.bones } };
+  });
+  blitz[slot] = {
+    ...src,
+    id: 'blitz_' + slot,
+    name: src.name.replace('Jab Combo', 'Flurry Jab'),
+    startup: Math.max(2, q(src.startup)),
+    total: newTotal,
+    cancelFrom: src.cancelFrom ? Math.max(2, q(src.cancelFrom)) : null,
+    anim,
+    hits: newHits,
+    // recompute cost on the retuned damage
+    cost: moveCost(newHits.reduce((s, h) => s + h.dmg, 0), Math.max(2, q(src.startup)), src.kbClass),
+  };
+}
+// Blitz jab is a true flurry: 3 rapid hits, chains into itself from frame 4.
+blitz.jab = {
+  ...blitz.jab,
+  name: 'Flurry Jab',
+  startup: 2, total: 20, cancelFrom: 4,
+  hits: [
+    H(0.85, 1.25, 0.7, 0.5, 2, 30, 18, 40, 2, 3),
+    H(0.85, 1.25, 0.7, 0.5, 2, 30, 18, 40, 6, 7),
+    H(0.85, 1.25, 0.7, 0.5, 3, 40, 24, 60, 10, 12),
+  ],
+  anim: [K(0, 'NEUTRAL'), K(1 / 20, 'WINDUP_SHORT'), K(2 / 20, 'JAB_R'), K(4 / 20, 'JAB_R'), K(5 / 20, 'WINDUP_SHORT'), K(6 / 20, 'JAB_R'), K(8 / 20, 'JAB_R'), K(9 / 20, 'WINDUP_SHORT'), K(10 / 20, 'JAB_R'), K(12 / 20, 'JAB_R'), K(1, 'NEUTRAL')],
+};
+blitz.jab.cost = moveCost(7, 2, 'weak');
+
+export const MOVES = { ronin, volt, wisp, bruiser, blitz };
