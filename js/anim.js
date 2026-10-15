@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=12';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=12';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=13';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=13';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -418,14 +418,18 @@ export function applyPose(f, eulerDict) {
     const armMap = f._vrmArmMap || {};
     for (const b of BONE_NAMES) {
       const e = eulerDict[b];
-      if (!e) continue;
+      const am = armMap[b];
+      // v0.12.1: arm bones apply M even with no delta — the rest pose itself
+      // is T-pose and must normalize to hanging, otherwise idle arms stick
+      // out sideways (UrbanTV bug).
+      if (!e && !(am && am.M)) continue;
       const node = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
       const Wrest = f._vrmWrest[b];
       if (!node || !Wrest) continue; // optional bones may be missing
-      _delta.setFromEuler(_euler.set(e[0], e[1], e[2])); // authored, F-frame
+      if (e) _delta.setFromEuler(_euler.set(e[0], e[1], e[2])); // authored, F-frame
+      else _delta.identity();
       // v0.12: arm bones normalize their rest limb direction to hanging
       // (M), so authored arm deltas work as designed. W_posed = D·M·W_rest.
-      const am = armMap[b];
       if (am && am.M) _delta.multiply(am.M);
       // P = posed F-relative orientation of the bone's parent: S, then down
       // the live (already-posed, root-to-tip) local chain. If there's no
