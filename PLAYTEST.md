@@ -1146,3 +1146,22 @@ interpretation).
 
 **Honest gaps:** Shoulder deformation on extreme T-pose→stance normalization is
 unjudged (Mushy's stubby arms fine); his eye is ground truth.
+
+## v0.12.1 — idle arm normalization (2026-10-14)
+
+**His report:** UrbanTV (Mixamo-rigged VRM) had arms stuck in T-pose while
+fighting; "mushy is still super weird too." Screenshot showed VRM in T-pose
+next to VOLT in fighting stance.
+
+**Root cause:** The v0.12 arm normalization (M) only applied when a pose dict
+entry existed for the bone (`if (!e) continue`). Idle arms have no delta, so
+M never applied and they stayed in the model's T-pose rest. Mixamo VRMs
+exposed it because their bones aren't THREE.Bone instances (my earlier
+child-bone probe returned null, a red herring — the real path uses
+getNormalizedBoneNode which works fine).
+
+**Fix:** Arm bones apply M even with no delta (`if (!e && !(am && am.M))
+continue`; `_delta.identity()` when no entry). W_posed = M·W_rest at idle.
+
+**Verified:** UrbanTV idle — arms hang at sides (was T-pose). Node suites
+green (vrm_rest 8/8, autorig 74/74).
