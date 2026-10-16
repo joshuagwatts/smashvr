@@ -13,7 +13,7 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const TOL = 0.25;
 // Sweep attacks: the striking point travels during active frames by design
 // (the hitbox follows the sweep). Verified at the strike tick.
-const SWEEP_IDS = new Set(['ronin_dsmash', 'blitz_dsmash', 'wisp_bair', 'wisp_dtilt']);
+const SWEEP_IDS = new Set(['ronin_dsmash', 'blitz_dsmash', 'spectre_dsmash', 'wisp_bair', 'wisp_dtilt']);
 
 const { buildProceduralRig } = await import(pathToFileURL(path.join(ROOT, 'js/rig.js')).href);
 const { MOVES, STRIKE_LIMB } = await import(pathToFileURL(path.join(ROOT, 'js/moves.js')).href);

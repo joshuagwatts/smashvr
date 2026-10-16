@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=32';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=32';
-import { STRIKE_LIMB } from './moves.js?v=32';
+import { createFighter } from './fighters.js?v=33';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=33';
+import { STRIKE_LIMB } from './moves.js?v=33';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=32';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=32';
-import { Input } from './input.js?v=32';
-import { sfx } from './audio.js?v=32';
-import { mulberry32 } from './rng.js?v=32';
+} from './fx.js?v=33';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=33';
+import { Input } from './input.js?v=33';
+import { sfx } from './audio.js?v=33';
+import { mulberry32 } from './rng.js?v=33';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -1504,7 +1504,10 @@ function endAttack(f) {
 function fireSpecial(f, mv) {
   switch (mv.special) {
     case 'fireball':
-      spawnProjectile(f, mv, f.x + f.facing * 0.8, f.y + 1.1, f.facing);
+      { const p = spawnProjectile(f, mv, f.x + f.facing * 0.8, f.y + 1.1, f.facing);
+        // v0.25: charged smashes (spectre's Aether Cannon) fire a charged
+        // projectile — the charge multiplier rides on the projectile record.
+        if (p) p.pow = f._chargeMult || 1; }
       break;
     case 'rise':
     case 'divegrab':
@@ -1810,7 +1813,7 @@ function stepProjectiles(game) {
       if (rectsOverlap(p.x, p.y, p.w, p.h, f.x, f.y + f._hurtH / 2, f._hurtW, f._hurtH)) {
         p.dead = true;
         applyHit(game,
-          { fighter: p.owner, facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null), kbClass: p.kbClass || 'weak' },
+          { fighter: p.owner, facing: p.dir || (p.owner ? p.owner.facing : 1), theme: p.theme || (p.owner ? p.owner.theme : null), kbClass: p.kbClass || 'weak', pow: p.pow || 1 },
           f, { dmg: p.dmg, angle: p.angle, baseKB: p.baseKB, kbGrowth: p.kbGrowth }, p.x, p.y);
         break;
       }

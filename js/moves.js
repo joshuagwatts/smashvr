@@ -3,7 +3,7 @@
 // (startup/active/total/damage/angle/KB) is recreated from public frame data.
 // Imports only budget.js (pure) — no three.js here.
 
-import { moveCost } from './budget.js?v=32';
+import { moveCost } from './budget.js?v=33';
 
 export const FIGHTER_DEFS = {
   ronin: {
@@ -42,6 +42,17 @@ export const FIGHTER_DEFS = {
     jumpV: 0.235, djumpV: 0.21, traction: 0.65,
     theme: { primary: '#f5d020', secondary: '#ff6b1a' },
     altTheme: { primary: '#20f5d0', secondary: '#1a6bff' },
+  },
+  // v0.25: SPECTRE — zoner. The keep-away kit: a fast Hex Bolt neutral
+  // special, an arcing Arc Shot side special, and a CHARGED Aether Cannon
+  // forward smash (charge it like any smash — the charge multiplier rides on
+  // the projectile). Slow feet, floaty air, weak melee with wide hitboxes.
+  spectre: {
+    name: 'SPECTRE', cls: 'light', bodyType: 'biped',
+    weight: 95, runSpeed: 0.125, airSpeed: 0.14, fallSpeed: 0.20, fastFall: 0.40,
+    jumpV: 0.24, djumpV: 0.21, traction: 0.6,
+    theme: { primary: '#a855f7', secondary: '#ec4899' },
+    altTheme: { primary: '#22d3ee', secondary: '#f0abfc' },
   },
 };
 
@@ -101,6 +112,9 @@ STRIKE_LIMB['bruiser_fsmash'] = 'head';
 
 // v0.24: blitz uses ronin limb mapping (cloned kit).
 for (const s of SLOTS) STRIKE_LIMB['blitz_' + s] = STRIKE_LIMB['ronin_' + s];
+
+// v0.25: spectre uses ronin limb mapping (cloned kit).
+for (const s of SLOTS) STRIKE_LIMB['spectre_' + s] = STRIKE_LIMB['ronin_' + s];
 
 // v0.7: floaters have no legs — their kick-family moves are body attacks.
 // Leg limbs redirect to the torso for hitbox generation (and the wisp anim
@@ -721,4 +735,80 @@ blitz.jab = {
 };
 blitz.jab.cost = moveCost(7, 2, 'weak');
 
-export const MOVES = { ronin, volt, wisp, bruiser, blitz };
+// ---------------------------------------------------------------------------
+// v0.25: SPECTRE — zoner kit. Cloned from ronin, retuned: +2 total (a touch
+// slower), 0.8x damage, 0.9x baseKB, 1.15x hitbox size (range bias). Strike
+// poses are UNCHANGED so anchors stay put (hitbox_sync) — only hitbox sizes
+// grow. Frame numbers SCALE with the new total (blitz pattern), with strike
+// keyframes remapped to the new hit fractions (anim.js isStrike is exact).
+// dsmash keeps ronin timing (continuous hip-spin breaks under scaling).
+// nspecial/sspecial/fsmash are projectile moves, authored fresh below.
+// ---------------------------------------------------------------------------
+const SPECTRE_NAMES = {
+  jab: 'Hex Jab', ftilt: 'Arcane Kick', utilt: 'Warding Palm', dtilt: 'Low Rune',
+  fsmash: 'Aether Cannon', usmash: 'Skyward Hex', dsmash: 'Void Spin',
+  nair: 'Hex Orbit', fair: 'Comet Hex', bair: 'Hex Back', uair: 'Aether Helm',
+  dair: 'Void Stomp', nspecial: 'Hex Bolt', sspecial: 'Arc Shot',
+  uspecial: 'Void Rise', dspecial: 'Hex Storm',
+};
+const spectre = {};
+for (const slot of SLOTS) {
+  const src = ronin[slot];
+  if (!src) continue;
+  if (slot === 'dsmash') {
+    spectre[slot] = { ...src, id: 'spectre_dsmash', name: SPECTRE_NAMES.dsmash, hits: src.hits.map((h) => ({ ...h })) };
+    continue;
+  }
+  const newTotal = src.total + 2;
+  const sc = newTotal / src.total;
+  const q = (f) => Math.max(1, Math.round(f * sc));
+  const newHits = src.hits.map((h) => ({
+    ...h,
+    from: q(h.from),
+    to: Math.max(q(h.from), q(h.to)),
+    dmg: Math.max(1, Math.round(h.dmg * 0.8)),
+    baseKB: h.baseKB * 0.9,
+    w: h.w * 1.15, h: h.h * 1.15,
+  }));
+  const oldStrikeT = src.hits.map((h) => h.from / src.total);
+  const newStrikeT = newHits.map((h) => h.from / newTotal);
+  const anim = src.anim.map((k) => {
+    const idx = oldStrikeT.findIndex((st) => Math.abs(k.t - st) < 1e-9);
+    return { t: idx >= 0 ? newStrikeT[idx] : k.t, bones: { ...k.bones } };
+  });
+  spectre[slot] = {
+    ...src,
+    id: 'spectre_' + slot,
+    name: SPECTRE_NAMES[slot],
+    startup: Math.max(2, q(src.startup)),
+    total: newTotal,
+    cancelFrom: src.cancelFrom ? Math.max(2, q(src.cancelFrom)) : null,
+    anim,
+    hits: newHits,
+    cost: moveCost(newHits.reduce((s, h) => s + h.dmg, 0), Math.max(2, q(src.startup)), src.kbClass),
+  };
+}
+// v0.25: projectile moves — fireSpecial's 'fireball' spawns the projectile at
+// the startup frame; the FIREBALL pose keyframe sits exactly on it.
+spectre.nspecial = mv('spectre', 'nspecial', {
+  name: 'Hex Bolt', startup: 8, active: 2, total: 30, kbClass: 'weak', special: 'fireball',
+  hits: [],
+  projectile: { speed: 11, dmg: 5, angle: 30, baseKB: 22, kbGrowth: 55, w: 0.45, h: 0.45, life: 150, gravity: 0.15 },
+  anim: [K(0, 'NEUTRAL'), K(7 / 30, 'WINDUP_SHORT'), K(8 / 30, 'FIREBALL'), K(10 / 30, 'FIREBALL'), K(1, 'NEUTRAL')],
+});
+spectre.sspecial = mv('spectre', 'sspecial', {
+  name: 'Arc Shot', startup: 14, active: 2, total: 42, kbClass: 'neutral', special: 'fireball',
+  hits: [],
+  projectile: { speed: 7, dmg: 8, angle: 55, baseKB: 30, kbGrowth: 70, w: 0.5, h: 0.5, life: 160, gravity: 0.6 },
+  anim: [K(0, 'NEUTRAL'), K(12 / 42, 'WINDUP_R'), K(14 / 42, 'FIREBALL'), K(17 / 42, 'FIREBALL'), K(1, 'NEUTRAL')],
+});
+// v0.25: the charged projectile smash — charge it like any smash (hold the
+// smash button); the charge multiplier rides on the projectile record (pow).
+spectre.fsmash = mv('spectre', 'fsmash', {
+  name: 'Aether Cannon', startup: 12, active: 2, total: 50, kbClass: 'strong', special: 'fireball',
+  hits: [],
+  projectile: { speed: 9, dmg: 13, angle: 35, baseKB: 35, kbGrowth: 95, w: 0.6, h: 0.6, life: 140, gravity: 0.1 },
+  anim: [K(0, 'NEUTRAL'), K(10 / 50, 'BIG_WINDUP'), K(12 / 50, 'FIREBALL'), K(16 / 50, 'FIREBALL'), K(1, 'NEUTRAL')],
+});
+
+export const MOVES = { ronin, volt, wisp, bruiser, blitz, spectre };
