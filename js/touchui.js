@@ -12,7 +12,7 @@
 // The engine's input contract is digital (keyboard is digital too), so the
 // stick quantizes its analog vector to direction booleans with a deadzone
 // and hysteresis — the vector itself stays analog (nub tracking, magnitude).
-import { Input } from './input.js?v=36';
+import { Input } from './input.js?v=37';
 
 export const STICK_DEADZONE = 0.18;
 const DIR_ON = 0.38;   // axis magnitude that turns a direction on
@@ -65,8 +65,27 @@ export const TouchUI = {
     this._applyMode(false);
     window.addEventListener('resize', () => { if (!this._notifying) this._layout(); });
     window.addEventListener('orientationchange', () => setTimeout(() => this._layout(), 60));
+    // v0.28 cold-boot fix: on real devices the console geometry can settle
+    // AFTER init — browser chrome and safe-area insets (which feed #console's
+    // padding) resolve late, and not every such change fires a window
+    // resize. The canvas position is a one-shot copy of the slot rect, so a
+    // settle that moved the bezel left the game desynced from the screen
+    // until a fullscreen round-trip forced a relayout. Observe the bezel
+    // (the rect that actually drives the slot math), follow visualViewport
+    // resizes, and re-run layout on load + once shortly after: the layout
+    // reconciles itself instead of being right only by luck. _layout is
+    // idempotent, so extra passes are harmless.
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => this._layout());
+    }
+    window.addEventListener('load', () => {
+      this._layout();
+      setTimeout(() => this._layout(), 400);
+    });
     if (this._slot && 'ResizeObserver' in window) {
-      new ResizeObserver(() => this._layout()).observe(this._slot);
+      const ro = new ResizeObserver(() => this._layout());
+      ro.observe(this._slot);
+      if (this._slot.parentElement) ro.observe(this._slot.parentElement); // #bezel
     }
     this._layout();
   },
