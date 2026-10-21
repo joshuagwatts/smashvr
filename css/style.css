@@ -415,6 +415,10 @@ body.touch-ui #console {
 }
 
 /* canvas + glass sit exactly on the screen slot (positioned by touchui) */
+/* #game must paint ABOVE the console shell (z 5): the shell's bezel/slot are
+   opaque, so without this the canvas renders hidden underneath them. Below
+   glass (9) and HUD (10); only applies on touch devices. */
+body.touch-ui #game { z-index: 6; }
 body.mode-console #game { border-radius: 12px; overflow: hidden; }
 body.mode-console #screen-glass {
   display: block; position: fixed; z-index: 9; pointer-events: none;
@@ -499,6 +503,7 @@ body.mode-console #hud-extra { top: calc(var(--vy) + 46px); }
 .pill:active { transform: translateY(2px); box-shadow: 0 1px 0 #100a20, 0 2px 4px rgba(0,0,0,0.45); }
 
 /* fullscreen mode: floating, a-bit-transparent controls */
+body.mode-full #console { display: none; } /* shell fully hidden; canvas owns the viewport */
 body.mode-full #touch-overlay { display: block; }
 #touch-overlay { position: fixed; inset: 0; z-index: 18; pointer-events: none; }
 #touch-overlay .ov-left {

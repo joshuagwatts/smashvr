@@ -12,7 +12,7 @@
 // The engine's input contract is digital (keyboard is digital too), so the
 // stick quantizes its analog vector to direction booleans with a deadzone
 // and hysteresis — the vector itself stays analog (nub tracking, magnitude).
-import { Input } from './input.js?v=34';
+import { Input } from './input.js?v=35';
 
 export const STICK_DEADZONE = 0.18;
 const DIR_ON = 0.38;   // axis magnitude that turns a direction on
@@ -222,7 +222,10 @@ export const TouchUI = {
     this._wireStick(this._stick.querySelector('#stick-base'), this._stick.querySelector('#stick-nub'));
     this._wireButtons(this._buttons);
     for (const rootEl of [shell, overlay]) {
-      rootEl.addEventListener('touchstart', (e) => { if (e.target.closest('.stick-wrap,.btn-cluster,.pills,.chrome-btn')) e.preventDefault(); }, { passive: false });
+      // NOTE: preventDefault on touchstart suppresses the click event — the
+      // pills and chrome buttons are click-driven, so only the analog
+      // controls (pointer-driven) get gesture prevention here.
+      rootEl.addEventListener('touchstart', (e) => { if (e.target.closest('.stick-wrap,.btn-cluster')) e.preventDefault(); }, { passive: false });
       rootEl.addEventListener('contextmenu', (e) => e.preventDefault());
     }
     const poke = () => this._pokeIdle();
