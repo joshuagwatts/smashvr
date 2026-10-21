@@ -17,6 +17,7 @@ export const Input = {
   map: { 1: P1, 2: P2 },
   keys: Object.create(null),    // code -> true while held
   pressed: Object.create(null), // code -> true if pressed since last endFrame()
+  virtual: Object.create(null), // code -> true while a touch control holds it (v0.26)
   _inited: false,
 
   init() {
@@ -35,10 +36,18 @@ export const Input = {
     window.addEventListener('blur', () => {
       this.keys = Object.create(null);
       this.pressed = Object.create(null);
+      this.virtual = Object.create(null);
     });
   },
 
-  down(code) { return !!this.keys[code]; },
+  down(code) { return !!this.keys[code] || !!this.virtual[code]; },
+
+  // v0.26: touch controls (js/touchui.js) drive P1 through the same key codes
+  // the keyboard uses, so readHuman()/netplay sampling see them unchanged.
+  setVirtual(code, on) {
+    if (on) this.virtual[code] = true;
+    else delete this.virtual[code];
+  },
 
   // edge: true only on the frame the key went down
   pressedEdge(code) { return !!this.pressed[code]; },

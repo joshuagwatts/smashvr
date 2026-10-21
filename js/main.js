@@ -2,33 +2,44 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=32';
-import { Input } from './input.js?v=32';
-import { sfx } from './audio.js?v=32';
-import { createFighter } from './fighters.js?v=32';
-import { FIGHTER_DEFS } from './moves.js?v=32';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=32';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=32';
-import { openLab } from './lab.js?v=32';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=32';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=32';
+import { createGame } from './engine.js?v=34';
+import { Input } from './input.js?v=34';
+import { sfx } from './audio.js?v=34';
+import { createFighter } from './fighters.js?v=34';
+import { FIGHTER_DEFS } from './moves.js?v=34';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=34';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=34';
+import { openLab } from './lab.js?v=34';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=34';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=34';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=32';
+} from './campaign.js?v=34';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=32';
+} from './netplay.js?v=34';
+import { TouchUI } from './touchui.js?v=34';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
 const DEMO = params.has('demo');
 
+// v0.26: touch devices get the handheld-console UI (no-op on desktop).
+// Init before the renderer so the first size already fits the console screen.
+TouchUI.init();
+function viewDims() {
+  return TouchUI.viewportSize() || { w: window.innerWidth, h: window.innerHeight };
+}
+
 // ------------------------------------------------------------ renderer/scene
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+{
+  const d = viewDims();
+  renderer.setSize(d.w, d.h);
+}
 $('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -57,16 +68,17 @@ scene.add(rim);
 }
 
 // slow-orbit menu camera for the title/select screens
-const menuCam = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+const menuCam = new THREE.PerspectiveCamera(50, viewDims().w / viewDims().h, 0.1, 200);
 menuCam.position.set(0, 4, 18);
 menuCam.lookAt(0, 2, 0);
 
 window.addEventListener('resize', () => {
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  menuCam.aspect = window.innerWidth / window.innerHeight;
+  const d = viewDims();
+  renderer.setSize(d.w, d.h);
+  menuCam.aspect = d.w / d.h;
   menuCam.updateProjectionMatrix();
   if (game) {
-    game.camera.aspect = window.innerWidth / window.innerHeight;
+    game.camera.aspect = d.w / d.h;
     game.camera.updateProjectionMatrix();
   }
 });
