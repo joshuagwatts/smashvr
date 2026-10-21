@@ -12,7 +12,7 @@
 // The engine's input contract is digital (keyboard is digital too), so the
 // stick quantizes its analog vector to direction booleans with a deadzone
 // and hysteresis — the vector itself stays analog (nub tracking, magnitude).
-import { Input } from './input.js?v=35';
+import { Input } from './input.js?v=36';
 
 export const STICK_DEADZONE = 0.18;
 const DIR_ON = 0.38;   // axis magnitude that turns a direction on
@@ -111,7 +111,21 @@ export const TouchUI = {
     const game = document.getElementById('game');
     const glass = document.getElementById('screen-glass');
     const root = document.documentElement;
+    const con = document.getElementById('console');
+    if (con) con.style.transform = ''; // always measure unscaled (see _fitScale)
     if (this.mode === 'console' && this._slot) {
+      // v0.27: aspect-locked screen — the slot becomes the largest 16:9 rect
+      // that fits inside the bezel (letterboxed, never stretched/squished;
+      // v0.26 filled the whole slot, which in portrait was ~1:1 and crammed
+      // the widescreen stage into a square).
+      const br = this._slot.parentElement.getBoundingClientRect(); // #bezel
+      const bw = Math.max(80, br.width - 20);  // bezel padding: 10px per side
+      const bh = Math.max(80, br.height - 20);
+      let sw = bw, sh = sw * 9 / 16;
+      if (sh > bh) { sh = bh; sw = sh * 16 / 9; }
+      this._slot.style.width = Math.round(sw) + 'px';
+      this._slot.style.height = Math.round(sh) + 'px';
+      this._fitScale();
       const r = this._slot.getBoundingClientRect();
       if (r.width >= 40 && r.height >= 40) {
         for (const el of [game, glass]) {
@@ -130,6 +144,7 @@ export const TouchUI = {
       }
     }
     // full mode / fallback: canvas covers the viewport again
+    if (this._slot) { this._slot.style.width = ''; this._slot.style.height = ''; }
     for (const el of [game, glass]) {
       if (!el) continue;
       el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.height = '';
@@ -139,6 +154,28 @@ export const TouchUI = {
     root.style.setProperty('--vw', '100vw');
     root.style.setProperty('--vh', '100vh');
     this._notifyResize();
+  },
+
+  // v0.27: if a control deck can't fit its content at designed size (very
+  // short viewports), shrink the WHOLE console uniformly — like scaling a
+  // physical handheld — instead of letting flex crush individual parts.
+  // Called from _layout with any previous transform already cleared.
+  _fitScale() {
+    const con = document.getElementById('console');
+    if (!con || this.mode !== 'console') return;
+    let s = 1;
+    const pairs = [
+      [document.querySelector('#console .deck-left'), this._stick],
+      [document.querySelector('#console .deck-right'), this._buttons],
+    ];
+    for (const [deck, kid] of pairs) {
+      if (!deck || !kid) continue;
+      if (deck.clientHeight > 0 && kid.offsetHeight > deck.clientHeight)
+        s = Math.min(s, deck.clientHeight / kid.offsetHeight);
+      if (deck.clientWidth > 0 && kid.offsetWidth > deck.clientWidth)
+        s = Math.min(s, deck.clientWidth / kid.offsetWidth);
+    }
+    if (s < 0.999) con.style.transform = `scale(${s})`;
   },
 
   // ------------------------------------------------------------ DOM
