@@ -8,6 +8,10 @@
   --accent: #7c5cff;
   --accent2: #00e5ff;
   --danger: #ff4d6d;
+  /* Console screen rect for HUD/gloss layers in console mode. Defaults
+     are the full-viewport values; touchui publishes exact px once layout
+     runs. Nothing load-bearing reads these — slot geometry is pure CSS. */
+  --vx: 0px; --vy: 0px; --vw: 100vw; --vh: 100vh;
 }
 
 * { box-sizing: border-box; }
@@ -334,7 +338,11 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
    none of this exists in the desktop layout. Two modes: .mode-console (game
    in a Game Boy Micro-style body) and .mode-full (fullscreen + floating
    translucent controls). --vx/--vy/--vw/--vh = the console screen rect,
-   published by touchui so HUD layers can live inside the little screen. */
+   published by touchui so HUD layers can live inside the little screen.
+   The slot's own geometry is pure CSS (aspect-ratio + container units on
+   #screen-slot, #game reparented inside it): correct at first paint with
+   zero events fired. JS only syncs the canvas buffer, gloss and HUD —
+   all change-gated, none of it load-bearing for the slot's shape. */
 #console, #touch-overlay, #screen-glass { display: none; }
 body.touch-ui { touch-action: none; overscroll-behavior: none; }
 body.mode-console {
@@ -346,6 +354,9 @@ body.mode-console {
 body.touch-ui #console {
   display: flex; flex-direction: column;
   position: fixed; inset: 0; z-index: 5;
+  /* Size to the dynamic viewport (tracks toolbar show/hide) with a vh
+     fallback for older engines — pure CSS, resolved before any JS runs. */
+  height: 100vh; height: 100dvh;
   padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
            max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   background:
@@ -392,8 +403,32 @@ body.touch-ui #console {
   border-radius: 20px; padding: 10px;
   box-shadow: inset 0 2px 10px rgba(0,0,0,0.85), inset 0 -1px 0 rgba(255,255,255,0.07),
               0 1px 0 rgba(255,255,255,0.08);
+  /* Size container: the slot sizes itself off the bezel's content box in
+     pure CSS (cq units below) — no JS measurement in the load path. The
+     bezel's own size comes from flex (landscape) / height:34% (portrait),
+     never from its contents, so size containment is safe here. */
+  container-type: size;
 }
-#screen-slot { flex: 0 0 auto; border-radius: 12px; background: #000; }
+/* The screen itself: the largest 16:9 rect inside the bezel, BY
+   CONSTRUCTION. aspect-ratio + container units resolve at first paint,
+   before any resize/visualViewport/ResizeObserver event could fire —
+   Brave on Android may deliver those late or effectively never, so no
+   event and no JS may be load-bearing for this box. All units are CSS
+   px: devicePixelRatio never enters layout (Brave farbling perturbs it;
+   DPR is for the canvas buffer only, clamped in main.js). touchui only
+   guards engines without cq support and syncs buffer/gloss/HUD to it. */
+#screen-slot {
+  position: relative; flex: 0 0 auto;
+  border-radius: 12px; background: #000; overflow: hidden;
+  aspect-ratio: 16 / 9;
+  width: 100%; max-width: 100%; max-height: 100%;
+}
+@supports (width: 1cqw) {
+  #screen-slot {
+    width: min(100cqw, 177.778cqh);
+    height: min(56.25cqw, 100cqh);
+  }
+}
 .deck { display: flex; align-items: center; justify-content: center; }
 .deck-left { width: 148px; }
 .deck-right { width: 172px; }
@@ -409,7 +444,7 @@ body.touch-ui #console {
 }
 
 /* portrait: screen on top, decks side by side below — Game Boy stack.
-   The screen band is sized for a 16:9 picture (touchui letterboxes the slot
+   The screen band is sized for a 16:9 picture (CSS letterboxes the slot
    inside it); the decks keep the rest at the controls' natural size. */
 @media (orientation: portrait) {
   #console-main { flex-wrap: wrap; align-content: stretch; }
@@ -426,7 +461,15 @@ body.touch-ui #console {
    opaque, so without this the canvas renders hidden underneath them. Below
    glass (9) and HUD (10); only applies on touch devices. */
 body.touch-ui #game { z-index: 6; }
-body.mode-console #game { border-radius: 12px; overflow: hidden; }
+/* Console mode: #game lives INSIDE #screen-slot (touchui reparents it),
+   so it inherits the slot's CSS-correct box exactly — no JS rect copying,
+   nothing to desync. If the canvas buffer ever lags a slot resize,
+   overflow:hidden crops for a frame instead of squishing. In full mode
+   #game returns to <body> and its base fixed/inset:0 rules apply. */
+body.mode-console #game {
+  position: absolute; inset: 0; width: auto; height: auto;
+  border-radius: 12px; overflow: hidden;
+}
 body.mode-console #screen-glass {
   display: block; position: fixed; z-index: 9; pointer-events: none;
   border-radius: 12px;

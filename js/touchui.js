@@ -7,12 +7,22 @@
 //               over it semi-transparent, fading lower while untouched.
 // Desktop (no coarse pointer) never initializes: no DOM, no behavior change.
 //
+// Layout: CSS-first. #screen-slot's 16:9 box is pure CSS (aspect-ratio +
+// container units in style.css) and #game is reparented inside the slot
+// in console mode, so first paint is correct BY CONSTRUCTION — no
+// resize/visualViewport/ResizeObserver event is load-bearing (Brave on
+// Android delivers those late or effectively never, and its farbling
+// perturbs devicePixelRatio/screen metrics; all layout math here is CSS
+// px, DPR is used nowhere in this file). JS only syncs what CSS cannot:
+// the canvas buffer size and the gloss/HUD placement, via change-gated
+// _layout() passes driven by a short boot-window rAF loop + event kicks.
+//
 // Input: the stick/buttons write P1's keyboard codes into Input.virtual, so
 // engine.readHuman() and netplay sampling consume them exactly like keys.
 // The engine's input contract is digital (keyboard is digital too), so the
 // stick quantizes its analog vector to direction booleans with a deadzone
 // and hysteresis — the vector itself stays analog (nub tracking, magnitude).
-import { Input } from './input.js?v=38';
+import { Input } from './input.js?v=39';
 
 export const STICK_DEADZONE = 0.18;
 const DIR_ON = 0.38;   // axis magnitude that turns a direction on
@@ -41,19 +51,25 @@ export const TouchUI = {
   mode: 'console', // 'console' | 'full'
   _slot: null,
   _stickDirs: { left: false, right: false, up: false, down: false },
+  _lastVSig: null,   // last published visual rect (gloss/HUD placement)
+  _lastBufSig: null, // last buffer size notified to the renderer
+  _bootLoopOn: false,
 
   isTouchDevice() {
     return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
       || 'ontouchstart' in window;
   },
 
-  // Size the renderer should use: the console screen rect in console mode,
-  // null (= window size) otherwise.
+  // Size the renderer should use: the console screen size in console
+  // mode, null (= window size) otherwise. Layout px only: offsetWidth/
+  // offsetHeight are immune to the console's fit-scale transform and to
+  // devicePixelRatio, and the slot is CSS-sized, so this is correct at
+  // first paint even if no resize event ever fires.
   viewportSize() {
     if (!this.active || this.mode !== 'console' || !this._slot) return null;
-    const r = this._slot.getBoundingClientRect();
-    if (r.width < 40 || r.height < 40) return null;
-    return { w: Math.round(r.width), h: Math.round(r.height) };
+    const w = this._slot.offsetWidth, h = this._slot.offsetHeight;
+    if (w < 40 || h < 40) return null;
+    return { w, h };
   },
 
   init() {
@@ -63,31 +79,28 @@ export const TouchUI = {
     catch { this.mode = 'console'; }
     this._buildDom();
     this._applyMode(false);
-    window.addEventListener('resize', () => { if (!this._notifying) this._layout(); });
-    window.addEventListener('orientationchange', () => setTimeout(() => this._layout(), 60));
-    // v0.28 cold-boot fix: on real devices the console geometry can settle
-    // AFTER init — browser chrome and safe-area insets (which feed #console's
-    // padding) resolve late, and not every such change fires a window
-    // resize. The canvas position is a one-shot copy of the slot rect, so a
-    // settle that moved the bezel left the game desynced from the screen
-    // until a fullscreen round-trip forced a relayout. Observe the bezel
-    // (the rect that actually drives the slot math), follow visualViewport
-    // resizes, and re-run layout on load + once shortly after: the layout
-    // reconciles itself instead of being right only by luck. _layout is
-    // idempotent, so extra passes are harmless.
+    // Geometry is CSS-first now (see the header note): the slot is right
+    // at first paint even if none of these ever fire. The listeners, the
+    // ResizeObserver and the boot-window rAF loop (see _kickRelayout) are
+    // a safety net that only re-syncs the canvas buffer + gloss/HUD when
+    // measurements actually change — they refine, they never originate.
+    const kick = () => this._kickRelayout();
+    window.addEventListener('resize', kick);
+    window.addEventListener('orientationchange', kick);
+    window.addEventListener('fullscreenchange', kick);
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', () => this._layout());
+      window.visualViewport.addEventListener('resize', kick);
     }
-    window.addEventListener('load', () => {
-      this._layout();
-      setTimeout(() => this._layout(), 400);
-    });
+    window.addEventListener('load', kick);
+    window.addEventListener('pointerdown', kick, true); // first touch re-asserts
     if (this._slot && 'ResizeObserver' in window) {
-      const ro = new ResizeObserver(() => this._layout());
-      ro.observe(this._slot);
-      if (this._slot.parentElement) ro.observe(this._slot.parentElement); // #bezel
+      try {
+        const ro = new ResizeObserver(kick);
+        ro.observe(this._slot);
+        if (this._slot.parentElement) ro.observe(this._slot.parentElement); // #bezel
+      } catch { /* RO is a safety net only — never load-bearing */ }
     }
-    this._layout();
+    this._kickRelayout();
   },
 
   setMode(mode) {
@@ -103,6 +116,7 @@ export const TouchUI = {
     b.classList.toggle('mode-console', this.mode === 'console');
     b.classList.toggle('mode-full', this.mode === 'full');
     this._mountControls();
+    this._mountGame();
     if (userGesture) {
       if (this.mode === 'full') {
         const p = document.documentElement.requestFullscreen?.();
@@ -115,7 +129,53 @@ export const TouchUI = {
     this._clearInputs();
     this._pokeIdle();
     // layout after the class flip has taken effect
-    requestAnimationFrame(() => this._layout());
+    requestAnimationFrame(() => this._kickRelayout());
+  },
+
+  // #game lives inside #screen-slot in console mode (CSS pins it to the
+  // slot's box — see style.css) and back at its original <body> spot in
+  // full mode, where its base fixed/inset:0 rules make it the viewport.
+  _mountGame() {
+    const game = document.getElementById('game');
+    if (!game) return;
+    if (this.mode === 'console') {
+      if (this._slot && game.parentElement !== this._slot) this._slot.appendChild(game);
+    } else if (game.parentElement !== document.body) {
+      document.body.insertBefore(game, document.getElementById('dmg-layer'));
+    }
+  },
+
+  // One reconciliation pass + (re)start the boot-window loop. The loop
+  // re-asserts layout every frame until measurements are stable for 30
+  // consecutive frames (and at least 500ms in), then self-terminates;
+  // hard cap ~3s. It exists for engines/browsers whose viewport metrics
+  // settle late WITHOUT firing events — under the CSS it changes
+  // nothing when geometry is already right (passes are change-gated).
+  _kickRelayout() {
+    if (!this.active || this._notifying) return;
+    this._layout();
+    if (this._bootLoopOn) return;
+    this._bootLoopOn = true;
+    const t0 = performance.now();
+    let last = this._layoutSig(), stable = 0;
+    const step = () => {
+      if (!this.active) { this._bootLoopOn = false; return; }
+      this._layout();
+      const sig = this._layoutSig();
+      if (sig === last) stable++; else { stable = 0; last = sig; }
+      const dt = performance.now() - t0;
+      if ((stable >= 30 && dt > 500) || dt > 3000) { this._bootLoopOn = false; return; }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  },
+
+  _layoutSig() {
+    if (!this._slot) return this.mode;
+    const r = this._slot.getBoundingClientRect();
+    return [this.mode, this._slot.offsetWidth, this._slot.offsetHeight,
+      Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height),
+      window.innerWidth, window.innerHeight].join('|');
   },
 
   _notifyResize() {
@@ -125,63 +185,94 @@ export const TouchUI = {
     this._notifying = false;
   },
 
+  // CSS owns the slot's geometry and #game's placement inside it. This
+  // pass only syncs what CSS cannot express: the gloss overlay's fixed
+  // position, the --v* HUD vars, and (via _notifyResize) the renderer's
+  // buffer size. Every write is change-gated, so repeat passes are free
+  // and can never fight the CSS or thrash the canvas buffer.
   _layout() {
     if (!this.active) return;
-    const game = document.getElementById('game');
     const glass = document.getElementById('screen-glass');
     const root = document.documentElement;
-    const con = document.getElementById('console');
-    if (con) con.style.transform = ''; // always measure unscaled (see _fitScale)
     if (this.mode === 'console' && this._slot) {
-      // v0.27: aspect-locked screen — the slot becomes the largest 16:9 rect
-      // that fits inside the bezel (letterboxed, never stretched/squished;
-      // v0.26 filled the whole slot, which in portrait was ~1:1 and crammed
-      // the widescreen stage into a square).
-      const br = this._slot.parentElement.getBoundingClientRect(); // #bezel
-      const bw = Math.max(80, br.width - 20);  // bezel padding: 10px per side
-      const bh = Math.max(80, br.height - 20);
-      let sw = bw, sh = sw * 9 / 16;
-      if (sh > bh) { sh = bh; sw = sh * 16 / 9; }
-      this._slot.style.width = Math.round(sw) + 'px';
-      this._slot.style.height = Math.round(sh) + 'px';
+      this._guardSlotAspect();
       this._fitScale();
-      const r = this._slot.getBoundingClientRect();
-      if (r.width >= 40 && r.height >= 40) {
-        for (const el of [game, glass]) {
-          if (!el) continue;
-          el.style.left = r.left + 'px';
-          el.style.top = r.top + 'px';
-          el.style.width = r.width + 'px';
-          el.style.height = r.height + 'px';
+      const ow = this._slot.offsetWidth, oh = this._slot.offsetHeight;
+      if (ow >= 40 && oh >= 40) {
+        const r = this._slot.getBoundingClientRect(); // visual rect (post fit-scale)
+        if (glass) {
+          glass.style.left = r.left + 'px';
+          glass.style.top = r.top + 'px';
+          glass.style.width = r.width + 'px';
+          glass.style.height = r.height + 'px';
         }
-        root.style.setProperty('--vx', r.left + 'px');
-        root.style.setProperty('--vy', r.top + 'px');
-        root.style.setProperty('--vw', r.width + 'px');
-        root.style.setProperty('--vh', r.height + 'px');
-        this._notifyResize();
+        const vSig = Math.round(r.left) + ',' + Math.round(r.top) + ',' +
+                     Math.round(r.width) + 'x' + Math.round(r.height);
+        if (vSig !== this._lastVSig) {
+          this._lastVSig = vSig;
+          root.style.setProperty('--vx', r.left + 'px');
+          root.style.setProperty('--vy', r.top + 'px');
+          root.style.setProperty('--vw', r.width + 'px');
+          root.style.setProperty('--vh', r.height + 'px');
+        }
+        const bSig = ow + 'x' + oh;
+        if (bSig !== this._lastBufSig) { this._lastBufSig = bSig; this._notifyResize(); }
         return;
       }
     }
-    // full mode / fallback: canvas covers the viewport again
+    // full mode / fallback: canvas covers the viewport again (base CSS),
+    // any guard-applied inline slot size is released back to CSS.
     if (this._slot) { this._slot.style.width = ''; this._slot.style.height = ''; }
-    for (const el of [game, glass]) {
-      if (!el) continue;
-      el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.height = '';
+    if (glass) {
+      glass.style.left = ''; glass.style.top = '';
+      glass.style.width = ''; glass.style.height = '';
     }
-    root.style.setProperty('--vx', '0px');
-    root.style.setProperty('--vy', '0px');
-    root.style.setProperty('--vw', '100vw');
-    root.style.setProperty('--vh', '100vh');
-    this._notifyResize();
+    const fSig = 'full:' + window.innerWidth + 'x' + window.innerHeight;
+    if (fSig !== this._lastVSig) {
+      this._lastVSig = fSig;
+      root.style.setProperty('--vx', '0px');
+      root.style.setProperty('--vy', '0px');
+      root.style.setProperty('--vw', '100vw');
+      root.style.setProperty('--vh', '100vh');
+    }
+    if (this._lastBufSig !== 'full') { this._lastBufSig = 'full'; this._notifyResize(); }
   },
 
-  // v0.27: if a control deck can't fit its content at designed size (very
-  // short viewports), shrink the WHOLE console uniformly — like scaling a
-  // physical handheld — instead of letting flex crush individual parts.
-  // Called from _layout with any previous transform already cleared.
+  // CSS sizes the slot (aspect-ratio + container units). This guard only
+  // fires on engines WITHOUT container-query units, where the CSS
+  // fallback (width:100% + max-height:100%) can distort the box — only
+  // then does JS pin the largest 16:9 rect inside the bezel, in layout px
+  // (offset* — transform- and DPR-immune). When CSS is doing its job the
+  // guard is a no-op and clears any stale inline size back to CSS.
+  _guardSlotAspect() {
+    const slot = this._slot, bezel = slot && slot.parentElement;
+    if (!bezel) return;
+    const w = slot.offsetWidth, h = slot.offsetHeight;
+    const off = w > 0 && h > 0 && Math.abs(w / h - 16 / 9) > 0.01 * (16 / 9);
+    if (!off) {
+      if (slot.style.width || slot.style.height) {
+        slot.style.width = ''; slot.style.height = '';
+      }
+      return;
+    }
+    const bw = Math.max(80, bezel.offsetWidth - 20);  // bezel padding: 10px/side
+    const bh = Math.max(80, bezel.offsetHeight - 20);
+    let sw = bw, sh = sw * 9 / 16;
+    if (sh > bh) { sh = bh; sw = sh * 16 / 9; }
+    slot.style.width = Math.round(sw) + 'px';
+    slot.style.height = Math.round(sh) + 'px';
+  },
+
+  // If a control deck can't fit its content at designed size (very
+  // short viewports), shrink the WHOLE console uniformly — like scaling
+  // a physical handheld — instead of letting flex crush individual
+  // parts. All measurements are layout px (offset*/client*), which the
+  // transform itself does not affect; #game rides inside the slot, so
+  // the scale can never desync the game from the screen.
   _fitScale() {
     const con = document.getElementById('console');
     if (!con || this.mode !== 'console') return;
+    con.style.transform = ''; // re-derive below
     let s = 1;
     const pairs = [
       [document.querySelector('#console .deck-left'), this._stick],

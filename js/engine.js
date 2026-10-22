@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=38';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=38';
-import { STRIKE_LIMB } from './moves.js?v=38';
+import { createFighter } from './fighters.js?v=39';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=39';
+import { STRIKE_LIMB } from './moves.js?v=39';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=38';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=38';
-import { Input } from './input.js?v=38';
-import { sfx } from './audio.js?v=38';
-import { mulberry32 } from './rng.js?v=38';
+} from './fx.js?v=39';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=39';
+import { Input } from './input.js?v=39';
+import { sfx } from './audio.js?v=39';
+import { mulberry32 } from './rng.js?v=39';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -744,28 +744,49 @@ function syncRoot(f) {
 }
 
 function updateCamera(game) {
-  // v0.9: legacy 1v1 (2 fighters, no teams) keeps the exact old framing;
-  // N-fighter / team games fit everyone.
-  const fs = game.fighters;
-  let mx, my, dist;
-  if (fs.length === 2 && !fs[0].team && !fs[1].team) {
-    const [a, b] = fs;
-    mx = (a.x + b.x) / 2; my = (a.y + b.y) / 2;
-    dist = Math.abs(a.x - b.x);
-  } else {
-    const alive = fs.filter((f) => f.state !== 'dead');
-    const xs = alive.map((f) => f.x), ys = alive.map((f) => f.y);
-    const mnx = Math.min(...xs), mxx = Math.max(...xs);
-    const mny = Math.min(...ys), mxy = Math.max(...ys);
-    mx = (mnx + mxx) / 2; my = (mny + mxy) / 2;
-    dist = Math.max(mxx - mnx, (mxy - mny) * 1.4);
+  // Follow-cam pass: frame EVERY living fighter (any N, teams or FFA) from
+  // their hurtbox bounds plus a short velocity lookahead, and derive the
+  // camera distance from the real frustum so the action fills ~75-80% of
+  // the frame on both axes. The old cam damped the midpoint (x*0.6, y*0.15),
+  // zoomed off horizontal separation only, and barely moved vertically —
+  // high launches and off-stage recoveries walked out of the frame.
+  const alive = game.fighters.filter((f) => f.state !== 'dead');
+  const cam = game.camera;
+  // Fallbacks hold the last smoothed pose when nobody is alive (match end).
+  let cx = game._camS ? game._camS.x : 0;
+  let lookY = game._camS ? game._camS.lookY : 1;
+  let cy = lookY + 1.25;
+  let z = game._camS ? game._camS.z : 14;
+  if (alive.length) {
+    // Bounds over hurtboxes (feet-anchored: y .. y+_hurtH, x +/- _hurtW/2),
+    // expanded by each fighter's capped velocity lead (~12 ticks ahead) so
+    // a launched fighter's destination is framed before they arrive.
+    let mnx = Infinity, mxx = -Infinity, mny = Infinity, mxy = -Infinity;
+    for (const f of alive) {
+      const hw = (f._hurtW || HURT_W) / 2, hh = f._hurtH || HURT_H;
+      const lx = Math.max(-1.4, Math.min(1.4, (f.vx || 0) * 12));
+      const ly = Math.max(-1.0, Math.min(1.0, (f.vy || 0) * 12));
+      mnx = Math.min(mnx, f.x - hw, f.x + lx - hw);
+      mxx = Math.max(mxx, f.x + hw, f.x + lx + hw);
+      mny = Math.min(mny, f.y, f.y + ly);
+      mxy = Math.max(mxy, f.y + hh, f.y + ly + hh);
+    }
+    // Center on the bounds, clamped to a stage/blast-informed box so the
+    // camera never wanders far off-stage; when a clamp bites, the zoom
+    // below compensates because it measures spread from the clamped center.
+    cx = Math.max(STAGE.x0 - 2.5, Math.min(STAGE.x1 + 2.5, (mnx + mxx) / 2));
+    lookY = Math.max(-3, Math.min(7.5, (mny + mxy) / 2));
+    cy = lookY + 1.25; // camera rides slightly above the look center
+    // Distance that fits the padded bounds inside the frustum: visible
+    // half-extents at the fighter plane are z*tan(fov/2) (vertical) and
+    // that times aspect (horizontal).
+    const tanV = Math.tan(((cam.fov || 50) * Math.PI) / 360);
+    const tanH = tanV * (cam.aspect || 16 / 9);
+    const halfW = Math.max(cx - mnx, mxx - cx) + 0.7;
+    const halfH = Math.max(lookY - mny, mxy - lookY) + 0.55;
+    z = Math.max(halfW / (tanH * 0.78), halfH / (tanV * 0.76));
+    z = Math.max(10.5, Math.min(32, z));
   }
-  let cx = Math.max(-4, Math.min(4, mx)) * 0.6;
-  let z = 16 + Math.max(0, Math.min(10, dist - 8)) * 0.5;
-  // v0.9: 8 fighters can spread wider than 1v1 — allow more zoom-out.
-  if (fs.length > 2) z = 16 + Math.max(0, Math.min(16, dist - 8)) * 0.6;
-  let cy = 3.5 + (my - 2) * 0.15;
-  let lookY = 2.2;
 
   // KO-blow cinematic (v0.2): push in toward the victim over the freeze,
   // then ease back out. Blend is smoothstepped so there's no snap.
@@ -777,21 +798,28 @@ function updateCamera(game) {
     if (k.t <= IN) blend = k.t / IN;
     else blend = Math.max(0, 1 - (k.t - IN) / OUT);
     const e = blend * blend * (3 - 2 * blend);
-    const kx = Math.max(-4, Math.min(4, k.x)) * 0.6;
+    const kx = Math.max(STAGE.x0 - 2.5, Math.min(STAGE.x1 + 2.5, k.x));
+    const ky = k.y + 0.85; // victim body center
     cx = cx + (kx - cx) * e;
-    cy = cy + ((2.4 + k.y * 0.25) - cy) * e;
-    z = z + (12.5 - z) * e;
-    lookY = lookY + (Math.max(0.5, k.y + 1) - lookY) * e;
+    cy = cy + ((ky + 1.25) - cy) * e;
+    z = z + (Math.max(8.5, Math.min(12.5, z - 2.5)) - z) * e;
+    lookY = lookY + (ky - lookY) * e;
   }
 
-  // v0.4: the camera lerps toward its target every tick instead of snapping
-  // to it — midpoint jumps (respawns, KOs) ease over instead of cutting.
+  // Frame-rate-independent exponential damping (updateCamera runs once per
+  // fixed sim tick, dt = TICK): factor 1-exp(-lambda*dt), so the smoothing
+  // is a true time constant — no fixed per-frame lerp, no snap, and target
+  // jumps (respawn teleports) converge smoothly instead of cutting. A large
+  // positional error (respawn / KO reset) damps faster for a quick pull.
   const S = game._camS || (game._camS = { x: cx, y: cy, z, lookY });
-  const ck = 0.16;
-  S.x += (cx - S.x) * ck;
-  S.y += (cy - S.y) * ck;
-  S.z += (z - S.z) * ck;
-  S.lookY += (lookY - S.lookY) * ck;
+  const err = Math.max(Math.abs(cx - S.x), Math.abs(lookY - S.lookY));
+  const lamP = err > 6 ? 9.5 : 8;
+  const kp = 1 - Math.exp(-lamP * TICK);
+  const kz = 1 - Math.exp(-5.5 * TICK);
+  S.x += (cx - S.x) * kp;
+  S.y += (cy - S.y) * kp;
+  S.z += (z - S.z) * kz;
+  S.lookY += (lookY - S.lookY) * kp;
 
   // impact shake (v0.2): subtle, amplitude decays quadratically — strong/kill
   // hits and KO blows only, never weak pokes. Applied AFTER the smoothing so
