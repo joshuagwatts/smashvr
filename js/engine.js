@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=39';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=39';
-import { STRIKE_LIMB } from './moves.js?v=39';
+import { createFighter } from './fighters.js?v=40';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=40';
+import { STRIKE_LIMB } from './moves.js?v=40';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=39';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=39';
-import { Input } from './input.js?v=39';
-import { sfx } from './audio.js?v=39';
-import { mulberry32 } from './rng.js?v=39';
+} from './fx.js?v=40';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=40';
+import { Input } from './input.js?v=40';
+import { sfx } from './audio.js?v=40';
+import { mulberry32 } from './rng.js?v=40';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -54,6 +54,11 @@ function blankHold() {
   return { left: false, right: false, up: false, down: false, jump: false,
            attack: false, smash: false, special: false, shield: false };
 }
+
+// v0.40: tap/hold attack decision window (ticks). A grounded attack press
+// starts a pending decision: release within the window = tilt/jab (fast
+// attack), still held past it with a direction = smash charge.
+const TAP_WINDOW = 10;
 
 // held-bool struct -> per-tick struct with pressed edges for action buttons
 function edges(prev, cur) {
@@ -136,10 +141,23 @@ function thinkAI(game, f, foe, a) {
     if (f.onGround) {
       if (r < P.atk) {
         a.tap.attack = true;
-        if (dy > 1.4) h.up = true; else if (dy < -1) h.down = true;
+        if (dy > 1.4) h.up = true;
+        else if (dy < -1) h.down = true;
+        // v0.40: low poke at close range once they're hurting — dtilt's
+        // flat angle skids them along the stage for a follow-up.
+        else if (foe.percent > 55 && adx < 1.3) h.down = true;
       } else if (r < P.smash) {
-        a.tap.smash = true;
-        if (dy > 1.4) h.up = true; else if (dy < -1) h.down = true;
+        // v0.40: some smashes get charged the new way — hold attack with a
+        // direction for a beat, then let go (see aiControl's atkHoldT).
+        if (r < P.smash * 0.45 && (a.atkHoldT || 0) <= 0) {
+          a.atkHoldT = 18 + (Math.floor(r * 1000) % 22); // 18-39 ticks of charge
+          a.atkDir = dy > 1.4 ? 'up' : (f.facing > 0 ? 'right' : 'left');
+          h.attack = true;
+          h[a.atkDir] = true;
+        } else {
+          a.tap.smash = true;
+          if (dy > 1.4) h.up = true; else if (dy < -1) h.down = true;
+        }
       } else if (r < P.special) {
         a.tap.special = true;
         if (dy > 2) h.up = true;
@@ -176,6 +194,13 @@ function aiControl(game, f, foe) {
   else { a.cool = cool; h = thinkAI(game, f, foe, a); a.hold = h; }
   for (const k in a.tap) if (a.tap[k]) h[k] = true; // one-shot presses
   a.tap = {};
+  // v0.40: charged-smash holds — keep attack + the locked direction down
+  // across decision ticks until the hold runs out (release = smash fires).
+  if (a.atkHoldT > 0) {
+    a.atkHoldT--;
+    h.attack = true;
+    if (a.atkDir) h[a.atkDir] = true;
+  }
   if (a.shieldTap) { h.shield = true; a.shieldTap = false; } // v0.3: roll trigger
   if (a.shieldT > 0) { a.shieldT--; h.shield = true; }
   return h;
@@ -326,13 +351,18 @@ export function createGame(opts) {
     f._plat = null;
     f._dropT = 0;
     f._fastFalling = false;
-    f._ai = { cool: 0, hold: blankHold(), tap: {}, shieldT: 0, usedUpB: false, shieldTap: false };
+    f._ai = { cool: 0, hold: blankHold(), tap: {}, shieldT: 0, usedUpB: false, shieldTap: false, atkHoldT: 0, atkDir: null };
     // v0.3 genre mechanics
     f._lastShieldPress = -100000;
     f._shieldStartTick = -100000;
     f._canGrabLedge = true;
     f._chargeT = 0;
     f._chargeMult = 1;
+    // v0.40: tap/hold attack decision + charge source + aerial landing lag
+    f._pendT = 0;            // ticks since a grounded attack press (0 = none)
+    f._chargeDir = null;     // smash slot locked at charge entry (attack-hold)
+    f._chargeBtn = 'smash';  // which button holds this charge: 'smash'|'attack'
+    f._landLagT = 0;         // remaining landing-lag ticks
     f._chargeGlow = null;
     f._victim = null;
     f._grabber = null;
@@ -594,12 +624,14 @@ export function createGame(opts) {
           f._lastShieldPress, f._shieldStartTick || 0,
           f._canGrabLedge ? 1 : 0, Math.round((f._chargeT || 0) * 1000) / 1000,
           Math.round((f._chargeMult || 0) * 1000) / 1000,
+          f._pendT || 0, f._chargeDir || '-', f._chargeBtn || 'smash', f._landLagT || 0,
           f._grabber ? f._grabber.slot : -1, f._victim ? f._victim.slot : -1,
           f._grabDur || 0, f._grabConnected ? 1 : 0, f._pummelCD || 0,
           f._rollDir || 0, f._hitstunDur || 0,
           f._aiPersonality || '', ai.cool || 0, pk(ai.hold),
           Object.keys(ai.tap || {}).sort().join('+'),
           ai.shieldT || 0, ai.usedUpB ? 1 : 0, ai.shieldTap ? 1 : 0,
+          ai.atkHoldT || 0, ai.atkDir || '-',
           [...(f._hitSet || [])].map((o) => o.slot).sort((a, b) => a - b).join('.'),
           f._plat ? PLATS.indexOf(f._plat) : -1,
           f._modScale || 1, Math.round((f._kbDealtMul || 1) * 1000) / 1000,
@@ -925,6 +957,9 @@ function stepFighter(game, f, cur, foes) {
     case 'squat':
       stepSquat(game, f, e);
       return;
+    case 'landlag':
+      stepLandLag(game, f);
+      return;
     case 'ledge':
       stepLedge(game, f, e);
       return;
@@ -1020,7 +1055,17 @@ function land(game, f, gy, plat) {
   if (f._ai) f._ai.usedUpB = false;
   // v0.18: squash & stretch — land with a squash (impact), scale by fall speed.
   if (wasAir) squash(f, Math.max(0.78, 1 + landVy * 1.2), 9);
-  if (f.state === 'attack' && wasAir) endAttack(f); // aerial landing cancels
+  if (f.state === 'attack' && wasAir) {
+    // v0.40: aerials don't cancel for free anymore — landing mid-aerial
+    // ends the move into LANDING LAG: the move's remaining frames, capped
+    // at 10 ticks. Grounded attacks and specials keep the old cancel.
+    const mv = f.moves[f.moveId];
+    if (mv && mv.kind === 'aerial') {
+      f._landLagT = Math.max(2, Math.min(10, mv.total - f.moveFrame));
+      f.moveId = null;
+      setState(f, 'landlag');
+    } else endAttack(f);
+  }
   else if (f.state === 'hitstun' && wasAir) {
     // v0.3 teching: shield pressed within 10 ticks of landing -> tech,
     // otherwise a vulnerable missed-tech bounce
@@ -1042,13 +1087,24 @@ function land(game, f, gy, plat) {
 }
 
 function stepControl(game, f, e) {
-  if (e.left && !e.right) f.facing = -1;
-  else if (e.right && !e.left) f.facing = 1;
+  // v0.40: facing at entry — aerial selection reads THIS (the facing at
+  // the press), not the post-flip facing below.
+  const face0 = f.facing;
+  // v0.40: no turning while crouched (down held on the ground is a stance)
+  if (!(f.onGround && e.down)) {
+    if (e.left && !e.right) f.facing = -1;
+    else if (e.right && !e.left) f.facing = 1;
+  }
   const dir = (e.right ? 1 : 0) - (e.left ? 1 : 0);
 
   if (f.onGround) {
-    const tgt = dir * f.runSpeed;
-    if (dir !== 0) {
+    if (e.down) {
+      // v0.40: crouch — rooted. Strong friction, no walking out of it.
+      f.vx *= 0.55;
+      if (Math.abs(f.vx) < 0.05) f.vx = 0;
+      setState(f, 'crouch');
+    } else if (dir !== 0) {
+      const tgt = dir * f.runSpeed;
       const d = tgt - f.vx;
       f.vx += Math.sign(d) * Math.min(Math.abs(d), 0.7);
       setState(f, 'run');
@@ -1070,6 +1126,36 @@ function stepControl(game, f, e) {
   f._fastFalling = false;
   if (!f.onGround && e.down && f.vy < 0) { f.vy = -f.fastFall; f._fastFalling = true; }
 
+  // v0.40: tap/hold attack decision. A grounded attack press doesn't fire
+  // immediately — it opens a TAP_WINDOW decision (the stick is a d-pad:
+  // direction + attack together). Releasing inside the window fires the
+  // fast attack for the direction held AT RELEASE (tilt, or jab when
+  // neutral); still holding past the window with a direction enters the
+  // smash charge with that direction locked; holding neutral past the
+  // window fires the jab. Another action button (smash/special/shield)
+  // pressed mid-decision wins and cancels it. Jump does NOT cancel: up IS
+  // the jump key, so up+attack (utilt/usmash) would eat itself.
+  if (f._pendT > 0) {
+    if (!f.onGround) {
+      f._pendT = 0; // walked off an edge mid-decision — the decision dies
+    } else if (e.shieldP || e.specialP || e.smashP) {
+      f._pendT = 0; // fall through: the other button gets its normal handling
+    } else {
+      f._pendT++;
+      if (!e.attack) {
+        const id = e.up ? 'utilt' : e.down ? 'dtilt' : (e.left || e.right) ? 'ftilt' : 'jab';
+        f._pendT = 0;
+        startAttack(f, id);
+      } else if (f._pendT > TAP_WINDOW) {
+        const slot = e.up ? 'usmash' : e.down ? 'dsmash' : (e.left || e.right) ? 'fsmash' : null;
+        f._pendT = 0;
+        if (slot) enterCharge(f, 'attack', slot);
+        else startAttack(f, 'jab');
+      }
+      return;
+    }
+  }
+
   // v0.3: grab = shield held + attack pressed edge, on the ground (beats shield)
   if (e.attackP && e.shield && f.onGround && !e.smashP && !e.specialP) {
     startGrab(game, f);
@@ -1083,7 +1169,14 @@ function stepControl(game, f, e) {
   }
 
   // attacks take priority over jump (so W+J = utilt, not a jump)
-  if (e.attackP || e.smashP || e.specialP) { startAttackFromInput(game, f, e); return; }
+  // v0.40: a grounded attack press opens the tap/hold decision above
+  // instead of firing instantly; air attacks and presses combined with
+  // smash/special still fire immediately through the classic router.
+  if (e.attackP && !e.smashP && !e.specialP && f.onGround) {
+    f._pendT = 1;
+    return;
+  }
+  if (e.attackP || e.smashP || e.specialP) { startAttackFromInput(game, f, e, face0); return; }
 
   if (e.jumpP) {
     if (f.onGround && f._plat && e.down) { // drop through platform
@@ -1106,21 +1199,29 @@ function stepControl(game, f, e) {
     return;
   }
   if (e.shield && f.onGround) { enterShield(game, f); return; }
-  if (e.down && f.onGround) { setState(f, 'crouch'); }
 }
 
 // ---------------------------------------------------------------- v0.3 genre mechanics
 
 // ---- charged smashes (Melee-style) ----
-function enterCharge(f) {
+// v0.40: a charge can be held by the smash button (classic) or by the
+// attack button (tap/hold decision), and the attack path locks the smash
+// direction at charge entry so releasing the stick mid-charge can't
+// reroute the smash.
+function enterCharge(f, btn, dirSlot) {
   f._chargeT = 0; f._chargeMult = 1;
+  f._chargeBtn = btn || 'smash';
+  f._chargeDir = dirSlot || null;
+  f._pendT = 0;
   f.vx *= 0.5;
   setState(f, 'charge');
   sfx.chargeStart();
 }
 
-// smash id chosen by the direction held at release
+// smash id chosen by the locked direction (attack-hold charges) or by the
+// direction held at release (smash-button charges, classic behavior)
 function chargeId(f, e) {
+  if (f._chargeDir) return f._chargeDir;
   if (e.up) return 'usmash';
   if (e.down) return 'dsmash';
   return 'fsmash';
@@ -1138,7 +1239,10 @@ function stepCharge(game, f, e) {
   }
   f.vx *= 0.8;
   physics(game, f);
-  if (sf >= 60 || !e.smash) releaseCharge(game, f, e);
+  // v0.40: the charge releases when the button HOLDING it is released —
+  // the smash button for classic charges, the attack button for tap/hold.
+  const held = f._chargeBtn === 'attack' ? e.attack : e.smash;
+  if (sf >= 60 || !held) releaseCharge(game, f, e);
 }
 
 function releaseCharge(game, f, e) {
@@ -1159,6 +1263,7 @@ function clearChargeFx(f) {
 function startGrab(game, f) {
   setState(f, 'grab');
   f._grabConnected = false;
+  f._pendT = 0; // v0.40: a grab consumes any tap/hold decision
   f.vx *= 0.5;
   sfx.whiff();
 }
@@ -1466,6 +1571,15 @@ function stepLedgeRoll(game, f) {
   if (sf >= 30) setState(f, 'idle');
 }
 
+// ---- v0.40: landing lag — grounded and committed for _landLagT ticks.
+// Buffered inputs (stepFighter latches them in every state) fire the tick
+// the lag ends, so acting out of a landing stays responsive.
+function stepLandLag(game, f) {
+  f.vx *= 0.8;
+  physics(game, f);
+  if (--f._landLagT <= 0) setState(f, 'idle');
+}
+
 // ---- jump-squat: 3 ticks, then full hop (jump held) or short hop (released) ----
 function stepSquat(game, f, e) {
   f.vx *= 0.9;
@@ -1486,25 +1600,30 @@ function stepSquat(game, f, e) {
 
 // ---------------------------------------------------------------- attacks
 
-function airAttackId(f, e) {
+function airAttackId(f, e, face) {
+  // v0.40: selection is relative to the facing at the PRESS (face = the
+  // pre-flip facing snapshotted in stepControl). The old code compared
+  // against the live facing AFTER stepControl flipped it toward the held
+  // direction, which made bair unreachable — away always read as fair.
   if (e.up) return 'uair';
   if (e.down) return 'dair';
   if (e.left || e.right) {
     const dir = (e.right ? 1 : 0) - (e.left ? 1 : 0);
-    return dir === f.facing ? 'fair' : 'bair';
+    return dir === face ? 'fair' : 'bair';
   }
   return 'nair';
 }
 
-function startAttackFromInput(game, f, e) {
+function startAttackFromInput(game, f, e, face0) {
   const up = e.up, dn = e.down, h = e.left || e.right;
+  const face = face0 === undefined ? f.facing : face0;
   let id;
   if (e.specialP) {
     id = up ? 'uspecial' : dn ? 'dspecial' : h ? 'sspecial' : 'nspecial';
   } else if (e.smashP) {
-    id = f.onGround ? (up ? 'usmash' : dn ? 'dsmash' : 'fsmash') : airAttackId(f, e);
+    id = f.onGround ? (up ? 'usmash' : dn ? 'dsmash' : 'fsmash') : airAttackId(f, e, face);
   } else {
-    id = f.onGround ? (up ? 'utilt' : dn ? 'dtilt' : h ? 'ftilt' : 'jab') : airAttackId(f, e);
+    id = f.onGround ? (up ? 'utilt' : dn ? 'dtilt' : h ? 'ftilt' : 'jab') : airAttackId(f, e, face);
   }
   startAttack(f, id);
 }
@@ -1519,6 +1638,9 @@ function startAttack(f, id) {
   f._fired = false;
   f._lifts = 0;
   f._chargeMult = 1; // default; the charge release sets the real value after
+  f._pendT = 0;      // v0.40: any started attack consumes the tap/hold decision
+  f._chargeDir = null;
+  f._chargeBtn = 'smash';
   // v0.18: stretch into the strike (snappy anticipation)
   squash(f, 1.12, 6);
   sfx.whiff();
@@ -1656,6 +1778,7 @@ function applyHit(game, att, def, hit, hx, hy) {
   exitShieldMesh(def);
   clearChargeFx(def); // getting hit cancels a charge (kills tone + glow)
   releaseGrab(def);   // getting hit / thrown breaks any grab involvement
+  def._pendT = 0;     // v0.40: getting hit cancels a pending tap/hold decision
 
   const pow = att.pow || 1;
   const effDmg = hit.dmg * pow;
@@ -1776,6 +1899,7 @@ function applyHit(game, att, def, hit, hx, hy) {
 
 function enterShield(game, f) {
   setState(f, 'shield');
+  f._pendT = 0; // v0.40: shielding consumes any tap/hold decision
   f._shieldStartTick = game._tick; // v0.3: parry window anchor
   f.vx *= 0.5;
   if (!f._shieldMesh) {

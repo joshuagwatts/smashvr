@@ -3,7 +3,7 @@
 // (startup/active/total/damage/angle/KB) is recreated from public frame data.
 // Imports only budget.js (pure) — no three.js here.
 
-import { moveCost } from './budget.js?v=39';
+import { moveCost } from './budget.js?v=40';
 
 export const FIGHTER_DEFS = {
   ronin: {
@@ -679,6 +679,15 @@ const bruiser = {
 // damage, 0.8x baseKB. Frame numbers SCALE with the new total (preserving the
 // move's rhythm), so the normalized anim tracks stay synced with the hits.
 // ---------------------------------------------------------------------------
+// v0.40: blitz names in his own voice (was: only the jab was renamed, the
+// tilts/aerials still answered to ronin's names in the Lab).
+const BLITZ_NAMES = {
+  ftilt: 'Rush Kick', utilt: 'Snap Palm', dtilt: 'Ankle Biter',
+  fsmash: 'Blur Rush', usmash: 'Sky Snap', dsmash: 'Cyclone Heel',
+  nair: 'Blur Spin', fair: 'Dart Fist', bair: 'Heel Flick',
+  uair: 'Helm Flick', dair: 'Dive Stomp', nspecial: 'Ember Dart',
+  sspecial: 'Blur Cyclone', uspecial: 'Rising Snap', dspecial: 'Blur Tornado',
+};
 const blitz = {};
 for (const slot of SLOTS) {
   const src = ronin[slot];
@@ -686,7 +695,7 @@ for (const slot of SLOTS) {
   // v0.24: spin moves (dsmash) keep ronin timing — the continuous hip rotation
   // doesn't survive frame scaling (hitbox_sync).
   if (slot === 'dsmash') {
-    blitz[slot] = { ...src, id: 'blitz_dsmash', hits: src.hits.map((h) => ({ ...h })) };
+    blitz[slot] = { ...src, id: 'blitz_dsmash', name: BLITZ_NAMES.dsmash, hits: src.hits.map((h) => ({ ...h })) };
     continue;
   }
   const newTotal = Math.max(10, src.total - 4);
@@ -711,7 +720,7 @@ for (const slot of SLOTS) {
   blitz[slot] = {
     ...src,
     id: 'blitz_' + slot,
-    name: src.name.replace('Jab Combo', 'Flurry Jab'),
+    name: BLITZ_NAMES[slot] || src.name,
     startup: Math.max(2, q(src.startup)),
     total: newTotal,
     cancelFrom: src.cancelFrom ? Math.max(2, q(src.cancelFrom)) : null,

@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=39';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=39';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=40';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=40';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -201,6 +201,7 @@ function locomotionPoseBiped(f, t) {
       break;
     }
     case 'squat':
+    case 'landlag': // v0.40: landing reads as a low recovery crouch
     case 'crouch': {
       P.spine = [0, 0, -0.5];
       P.upperLegR = [0, 0, 0.95]; P.lowerLegR = [0, 0, -1.6];
