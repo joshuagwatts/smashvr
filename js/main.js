@@ -2,23 +2,23 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=37';
-import { Input } from './input.js?v=37';
-import { sfx } from './audio.js?v=37';
-import { createFighter } from './fighters.js?v=37';
-import { FIGHTER_DEFS } from './moves.js?v=37';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=37';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=37';
-import { openLab } from './lab.js?v=37';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=37';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=37';
+import { createGame } from './engine.js?v=38';
+import { Input } from './input.js?v=38';
+import { sfx } from './audio.js?v=38';
+import { createFighter } from './fighters.js?v=38';
+import { FIGHTER_DEFS } from './moves.js?v=38';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=38';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=38';
+import { openLab } from './lab.js?v=38';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=38';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=38';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=37';
+} from './campaign.js?v=38';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=37';
-import { TouchUI } from './touchui.js?v=37';
+} from './netplay.js?v=38';
+import { TouchUI } from './touchui.js?v=38';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
