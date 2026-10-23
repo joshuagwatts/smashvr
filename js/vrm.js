@@ -12,7 +12,7 @@ export async function loadVRMFile(file) {
   if (ext === 'glb' || ext === 'gltf') {
     // Auto-rig path: static character -> fitted humanoid skeleton.
     // Dynamic import keeps the rigger out of the boot bundle.
-    const { autoRigCharacterFile } = await import('./autorig.js?v=40');
+    const { autoRigCharacterFile } = await import('./autorig.js?v=41');
     return autoRigCharacterFile(file);
   }
   const loader = new GLTFLoader();

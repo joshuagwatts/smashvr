@@ -16,9 +16,9 @@
 //    verified over fake channels (test/netproto.mjs) and the signaling layer
 //    is verified as far as headless allows. Two real devices are ground truth.
 
-import { packInput, unpackInput, PACKED_BLANK, lobbyCode } from './rng.js?v=40';
-import { TICK, readHuman } from './engine.js?v=40';
-import { sfx } from './audio.js?v=40';
+import { packInput, unpackInput, PACKED_BLANK, lobbyCode } from './rng.js?v=41';
+import { TICK, readHuman } from './engine.js?v=41';
+import { sfx } from './audio.js?v=41';
 
 export const NET_DELAY = 3;       // input delay, ticks
 export const HASH_EVERY = 60;     // state-hash cadence, ticks
@@ -29,6 +29,64 @@ export const APP_ID = 'smashvr-v011';
 // Thin wrapper over Trystero rooms (dual strategy: torrent + nostr, same as
 // LIMBO's proven setup). Every payload carries our per-session cid + seq and
 // is deduped — the same human may arrive via both strategies.
+
+/* OpenRelay static-auth (no signup): time-limited HMAC-SHA1 credentials. */
+const TURN_HOST = 'staticauth.openrelay.metered.ca';
+const TURN_SECRET = 'openrelayprojectsecret';
+const TURN_TTL_S = 24 * 3600; // credentials valid 24h
+
+async function makeTurnCreds() {
+  const expiry = Math.floor(Date.now() / 1000) + TURN_TTL_S;
+  const username = `${expiry}:smashvr`;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(TURN_SECRET),
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(username)
+  );
+  const bytes = new Uint8Array(sig);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return { username, password: btoa(bin), expiry };
+}
+
+function buildIceServers(creds) {
+  return [
+    // STUN first (cheap, direct); Trystero's defaults are replaced, so ours
+    // must be complete.
+    { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+    // TURN relay for symmetric NATs — UDP then TCP flavors.
+    {
+      urls: [`turn:${TURN_HOST}:80`, `turn:${TURN_HOST}:443`],
+      username: creds.username,
+      credential: creds.password,
+    },
+    {
+      urls: `turns:${TURN_HOST}:443`,
+      username: creds.username,
+      credential: creds.password,
+    },
+  ];
+}
+
+// One rtcConfig per page load (creds live 24h). If WebCrypto is
+// unavailable (non-secure context) fall back to Trystero's defaults
+// instead of breaking transport creation.
+let rtcConfigPromise = null;
+export function getRtcConfig() {
+  if (!rtcConfigPromise) {
+    rtcConfigPromise = makeTurnCreds()
+      .then((creds) => ({ iceServers: buildIceServers(creds) }))
+      .catch(() => null);
+  }
+  return rtcConfigPromise;
+}
 
 export async function createNetTransport(roomCode, hooks) {
   const { onPeerJoin = () => {}, onPeerLeave = () => {}, onMessage = () => {} } = hooks;
@@ -63,6 +121,12 @@ export async function createNetTransport(roomCode, hooks) {
   // Nostr relay pinning — LIMBO-verified reliable set for this app shape
   // (the 0.25.4 defaults include flaky relays).
   const NOSTR_RELAYS = ['wss://yabu.me/v2', 'wss://relay02.lnfi.network', 'wss://relay.sigit.io'];
+  // v0.28: pass LIMBO's ICE config (STUN + OpenRelay TURN). Without it
+  // Trystero's defaults are STUN-only, and two NATted phones (carrier
+  // CGNAT especially) can signal fine yet never connect — "codes don't
+  // connect". rtcConfig replaces the defaults wholesale in Trystero
+  // core, so buildIceServers carries the STUN entries too.
+  const rtcConfig = await getRtcConfig();
   let ok = 0;
   const stratErrs = [];
   const sendFns = [];
@@ -76,7 +140,7 @@ export async function createNetTransport(roomCode, hooks) {
       // Trystero 0.25.x API: makeAction returns an ACTION OBJECT (not a
       // [send, recv] tuple); room event handlers are property assignments.
       const room = mod.joinRoom(
-        { appId: APP_ID, ...(name === 'nostr' ? { relayConfig: { urls: NOSTR_RELAYS } } : {}) },
+        { appId: APP_ID, ...(rtcConfig ? { rtcConfig } : {}), ...(name === 'nostr' ? { relayConfig: { urls: NOSTR_RELAYS } } : {}) },
         roomCode
       );
       const action = room.makeAction('sv');
