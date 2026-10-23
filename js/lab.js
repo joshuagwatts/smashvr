@@ -11,12 +11,13 @@
 // 'smashvr-kit' / 'smashvr-theme' ({defId, ...}) so the engine can live-update.
 
 import * as THREE from 'three';
-import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=42';
-import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=42';
-import { createFighter } from './fighters.js?v=42';
-import { tickFighterVisual, setFighterTheme } from './anim.js?v=42';
-import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=42';
-import { attachVRMToFighter } from './vrm.js?v=42';
+import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=43';
+import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=43';
+import { createFighter } from './fighters.js?v=43';
+import { tickFighterVisual, setFighterTheme } from './anim.js?v=43';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=43';
+import { attachVRMToFighter } from './vrm.js?v=43';
+import { invalidatePortrait } from './portrait.js?v=43';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
@@ -262,6 +263,13 @@ export function openLab(containerEl, onClose) {
   css(poseBadge, { padding: '3px 10px', borderRadius: '20px', fontWeight: '700', letterSpacing: '1px', fontSize: '11px',
     background: '#b98cff33', color: '#d9c2ff', border: '1px solid #b98cff' });
   btRow.appendChild(poseBadge);
+  // v0.43: facing badge — shows the import-time facing correction the
+  // detector applied (e.g. a backwards model corrected by 180°). Hidden
+  // when the model already faced forward.
+  const faceBadge = el('span', '');
+  css(faceBadge, { padding: '3px 10px', borderRadius: '20px', fontWeight: '700', letterSpacing: '1px', fontSize: '11px',
+    background: '#39d0d833', color: '#a7ecff', border: '1px solid #39d0d8' });
+  btRow.appendChild(faceBadge);
   leftCol.appendChild(btRow);
 
   // v0.19: fighting style row — auto-detected archetype + manual override.
@@ -280,8 +288,15 @@ export function openLab(containerEl, onClose) {
   }
   styleSel.onchange = async () => {
     await setCustomStyle(defId, styleSel.value);
+    // v0.43: a style change swaps the kit under the hood (same as the kit
+    // picker) — reset saved move swaps, refresh the move rows, and retire
+    // the cached select portrait (its jab pose is style-dependent).
+    kit = null;
+    try { localStorage.removeItem('smashvr_kit_' + defId); } catch (e) {}
+    invalidatePortrait(defId);
     renderStyle();
     rebuildPreview();
+    renderAll();
     say(styleSel.value === 'auto' ? 'Style: auto-detect.' : `Style overridden to ${styleSel.value} — applies on next fight.`, true);
   };
   styleRow.appendChild(el('span', 'Style:'));
@@ -335,6 +350,18 @@ export function openLab(containerEl, onClose) {
       poseBadge.style.display = '';
     } else {
       poseBadge.style.display = 'none';
+    }
+    renderFaceBadge();
+  }
+  // v0.43: facing-correction badge (see btRow construction).
+  function renderFaceBadge() {
+    const entry = getCustomEntry(defId);
+    const deg = entry && entry.faceDeg;
+    if (deg && Math.abs(deg) >= 10) {
+      faceBadge.textContent = `FACING ⟳${Math.round(deg)}°`;
+      faceBadge.style.display = '';
+    } else {
+      faceBadge.style.display = 'none';
     }
   }
 
@@ -472,7 +499,7 @@ export function openLab(containerEl, onClose) {
       getCharacterData(defId).then((data) => {
         if (tok !== previewToken || dead || pf !== previewF) return;
         const entry = getCustomEntry(defId);
-        attachVRMToFighter(pf, { ...data, flip: !!entry?.flip });
+        attachVRMToFighter(pf, { ...data, flip: !!entry?.flip, faceYaw: entry?.faceYaw || 0 });
       }).catch(() => {});
     }
   }

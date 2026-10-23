@@ -9,11 +9,11 @@ import * as THREE from 'three';
 // roster/moves — its registry is empty, isCustom() returns false for every
 // import, and custom portraits silently render the bare procedural rig in
 // the grey placeholder theme instead of the imported VRM.
-import { FIGHTER_DEFS } from './moves.js?v=42';
-import { createFighter } from './fighters.js?v=42';
-import { tickFighterVisual } from './anim.js?v=42';
-import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=42';
-import { attachVRMToFighter } from './vrm.js?v=42';
+import { FIGHTER_DEFS } from './moves.js?v=43';
+import { createFighter } from './fighters.js?v=43';
+import { tickFighterVisual } from './anim.js?v=43';
+import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=43';
+import { attachVRMToFighter } from './vrm.js?v=43';
 
 const SIZE = 220;
 let renderer = null;
@@ -69,6 +69,13 @@ export function getPortrait(defId) {
   return p;
 }
 
+// v0.43: drop the session-cached portrait so the next getPortrait
+// re-renders (used when a custom's style or facing correction changes —
+// roster.setCustomStyle clears the IndexedDB cache on its side).
+export function invalidatePortrait(defId) {
+  portraitMemo.delete(defId);
+}
+
 async function renderPortrait(defId) {
   // Customs: use cached portrait if we have one from the current cache
   // version (older caches may hold the pre-fix placeholder render).
@@ -84,7 +91,7 @@ async function renderPortrait(defId) {
     try {
       const data = await getCharacterData(defId);
       const entry = getCustomEntry(defId);
-      attachVRMToFighter(f, { ...data, flip: !!entry?.flip });
+      attachVRMToFighter(f, { ...data, flip: !!entry?.flip, faceYaw: entry?.faceYaw || 0 });
     } catch (e) {
       return null; // VRM failed — caller shows the swatch fallback
     }

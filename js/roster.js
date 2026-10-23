@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=42';
-import { loadVRMFile } from './vrm.js?v=42';
+import { FIGHTER_DEFS } from './moves.js?v=43';
+import { loadVRMFile } from './vrm.js?v=43';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -109,11 +109,33 @@ export function listCustoms() {
   return [...registry.values()].map((e) => ({
     id: e.id, name: e.name, filename: e.filename,
     sourceType: e.sourceType, bodyType: e.bodyType, kit: e.kit, pose: e.pose || null,
+    faceDeg: e.faceDeg || 0,
   }));
 }
 
 export function getCustomEntry(defId) {
   return registry.get(defId) || null;
+}
+
+// v0.43: run the facing detector over freshly loaded model data.
+// Returns { faceYaw, faceDeg }: faceYaw is the attach-time correction in
+// radians (VRM path — the deviation is subtracted again at attach); for
+// auto-rigged GLBs the rigger already baked the correction into the
+// scene, so faceYaw is 0 and faceDeg only reports what was found.
+async function detectRecordFacing(data) {
+  if (!data) return { faceYaw: 0, faceDeg: 0 };
+  if (data.autorig) {
+    const f = data.autorig.facing || {};
+    return { faceYaw: 0, faceDeg: f.yawDeg || 0 };
+  }
+  if (data.vrm) {
+    try {
+      const { detectFacingVRM } = await import('./facing.js?v=43');
+      const det = detectFacingVRM(data.vrm);
+      return { faceYaw: det.yaw || 0, faceDeg: det.deg || 0 };
+    } catch (e) { /* detection best-effort */ }
+  }
+  return { faceYaw: 0, faceDeg: 0 };
 }
 
 // Import a file -> register/update the custom slot. Returns { id, name,
@@ -128,16 +150,21 @@ export async function importCharacter(file) {
   let archetype = null, style = null;
   if (!data.autorig && data.vrm) {
     try {
-      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=42');
+      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=43');
       archetype = analyzeVRM(data.vrm);
       style = assignStyle(archetype);
     } catch (e) { /* analysis failed — default style */ }
   }
+  // v0.43: measure which way the model actually faces (toes/eyes/head) so
+  // backwards-authored imports get corrected at attach, not by hand.
+  const facingNow = await detectRecordFacing(data);
   const rec = {
     id,
     name: existing ? existing.name : sanitize(file.name).toUpperCase(),
     filename: file.name,
     sourceType: ext === 'vrm' ? 'vrm' : 'glb',
+    faceYaw: facingNow.faceYaw,
+    faceDeg: facingNow.faceDeg,
     bodyType: existing ? existing.bodyType
       : ((data.autorig && data.autorig.bodyType) || 'biped'),
     // v0.8: detected import pose (T/A/unknown) for the Lab badge.
@@ -156,7 +183,7 @@ export async function importCharacter(file) {
   registerDef(rec);
   registry.get(id).data = data; // cache the just-loaded model
   return { id, name: rec.name, updated: !!existing, bodyType: rec.bodyType, pose: rec.pose, sourceType: rec.sourceType,
-           archetype: rec.archetype, style: rec.style };
+           archetype: rec.archetype, style: rec.style, faceDeg: rec.faceDeg };
 }
 
 // Loaded model data for a custom def, loading from the stored blob on demand.
@@ -166,6 +193,18 @@ export async function getCharacterData(defId) {
   if (entry.data) return entry.data;
   const file = new File([entry.blob], entry.filename);
   entry.data = await loadVRMFile(file);
+  // v0.43: records imported before facing detection have no faceYaw —
+  // measure once, persist, and drop the (possibly backwards) cached
+  // portrait so it re-renders corrected. This is what upgrades existing
+  // collections (e.g. Cactus Boy) without a re-import.
+  if (entry.faceYaw == null) {
+    const f = await detectRecordFacing(entry.data);
+    entry.faceYaw = f.faceYaw;
+    entry.faceDeg = f.faceDeg;
+    entry.portrait = null;
+    entry.portraitV = 0;
+    idbPut(entry).catch(() => {});
+  }
   return entry.data;
 }
 
@@ -198,7 +237,9 @@ export async function setCustomFlip(defId, flip) {
 // v0.28: portraits carry a cache version — v1 caches (if any) may hold the
 // placeholder-rig render produced while portrait.js was module-split, so
 // only portraitV >= PORTRAIT_CACHE_V is trusted.
-export const PORTRAIT_CACHE_V = 2;
+// v0.43: v3 — v2 portraits of VRM0 imports were rendered facing backwards
+// (the baseYaw bug), so all older caches are distrusted and re-rendered.
+export const PORTRAIT_CACHE_V = 3;
 export async function setCustomPortrait(defId, dataUrl) {
   const entry = registry.get(defId);
   if (!entry) return;
@@ -225,11 +266,24 @@ export async function setCustomStyle(defId, styleName) {
     registerDef(entry);
   } else if (entry.archetype) {
     // Revert to auto-detected.
-    const { assignStyle } = await import('./archetype.js?v=42');
+    const { assignStyle } = await import('./archetype.js?v=43');
     entry.style = assignStyle(entry.archetype);
     entry.kit = entry.style.kit;
     registerDef(entry);
+  } else {
+    // v0.43: 'auto' on an import with no archetype analysis (auto-rigged
+    // GLBs) reverts to the plain default instead of leaving the previous
+    // override's style/kit stuck on.
+    entry.style = null;
+    entry.kit = 'ronin';
+    registerDef(entry);
   }
+  // v0.43: the portrait poses the fighter's (style-dependent) jab —
+  // headbutt styles visibly change it — so a style change must retire the
+  // cached portrait. portrait.js's session memo is cleared by the Lab via
+  // invalidatePortrait(); the IDB cache is cleared here.
+  entry.portrait = null;
+  entry.portraitV = 0;
   await idbPut(entry);
 }
 

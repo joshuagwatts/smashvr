@@ -21,7 +21,8 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=42';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=43';
+import { detectFacingScene } from './facing.js?v=43';
 
 // game bone -> VRM humanoid name, inverted for the adapter below
 const BONE_OF_VRM_NAME = {};
@@ -58,6 +59,24 @@ export function autoRigScene(scene) {
       'This file already contains a skeleton — auto-rig only handles static (unrigged) meshes. ' +
       'Rigged avatars go through the VRM import path.'
     );
+  }
+
+  // ---- 1b. v0.43: facing normalization ----
+  // The fit below assumes the model faces +Z (toe segments extend +Z,
+  // anatomical right at -X). A backwards/sideways-authored GLB would fit
+  // mirrored and fight facing away from the action, so detect the real
+  // facing from the geometry (feet mass vs ankle line + head mass) and
+  // bake the correction into the scene BEFORE any measuring happens.
+  // The pseudo-VRM then behaves like a correctly-authored model and the
+  // standard attach rotation applies; the detected yaw is reported on
+  // the result for the Lab/import toast.
+  let facing = { yaw: 0, deg: 0, confidence: 0, signals: {} };
+  try {
+    facing = detectFacingScene(scene);
+  } catch (e) { /* detection is best-effort — never block an import */ }
+  if (facing.yaw && Math.abs(facing.yaw) > 0.01) {
+    scene.rotation.y -= facing.yaw;
+    scene.updateMatrixWorld(true);
   }
 
   scene.updateMatrixWorld(true);
@@ -473,5 +492,6 @@ export function autoRigScene(scene) {
           : `Auto-rigged with warnings (${warnings[0]}${warnings.length > 1 ? `, +${warnings.length - 1} more` : ''}) — results may be janky`;
 
   return { vrm, vrm0: false, autorig: { pose, bodyType, warnings, notice, ok, boneCount: boneList.length,
+    facing: { yawDeg: facing.deg, confidence: facing.confidence },
     armDroopDeg: { L: +(droopRad.L * 180 / Math.PI).toFixed(1), R: +(droopRad.R * 180 / Math.PI).toFixed(1) } } };
 }

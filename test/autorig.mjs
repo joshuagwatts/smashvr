@@ -24,6 +24,7 @@ async function stage() {
     return fs.writeFile(dst, s);
   });
   await rw(path.join(ROOT, 'js/rig.js'), path.join(STAGE, 'rig.js'));
+  await rw(path.join(ROOT, 'js/facing.js'), path.join(STAGE, 'facing.js'));
   await rw(path.join(ROOT, 'js/autorig.js'), path.join(STAGE, 'autorig.js'), [
     ["from 'three/addons/loaders/GLTFLoader.js'", `from '${path.join(STAGE, 'addons/loaders/GLTFLoader.js')}'`],
     ["from './rig.js'", `from '${path.join(STAGE, 'rig.js')}'`],

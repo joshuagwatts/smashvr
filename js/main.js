@@ -2,23 +2,23 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=42';
-import { Input } from './input.js?v=42';
-import { sfx } from './audio.js?v=42';
-import { createFighter } from './fighters.js?v=42';
-import { FIGHTER_DEFS } from './moves.js?v=42';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=42';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=42';
-import { openLab } from './lab.js?v=42';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=42';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=42';
+import { createGame } from './engine.js?v=43';
+import { Input } from './input.js?v=43';
+import { sfx } from './audio.js?v=43';
+import { createFighter } from './fighters.js?v=43';
+import { FIGHTER_DEFS } from './moves.js?v=43';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=43';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=43';
+import { openLab } from './lab.js?v=43';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=43';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=43';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=42';
+} from './campaign.js?v=43';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=42';
-import { TouchUI } from './touchui.js?v=42';
+} from './netplay.js?v=43';
+import { TouchUI } from './touchui.js?v=43';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -799,7 +799,7 @@ async function attachCustoms(g) {
       const data = await getCharacterData(f.defId);
       if (!f.root.parent) return; // fight was quit mid-load
       const entry = getCustomEntry(f.defId); // v0.12.2: per-model flip
-      attachVRMToFighter(f, { ...data, flip: !!entry?.flip });
+      attachVRMToFighter(f, { ...data, flip: !!entry?.flip, faceYaw: entry?.faceYaw || 0 });
       // imported body type drives hover locomotion — unless the Lab's manual
       // override for this def says otherwise (override wins, no re-import).
       const ov = readBodyTypeOverride(f.defId);
@@ -911,15 +911,19 @@ $('vrm-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file) return;
   try {
-    const { id, name, updated, bodyType, pose, sourceType } = await importCharacter(file);
+    const { id, name, updated, bodyType, pose, sourceType, faceDeg } = await importCharacter(file);
     // v0.8: report the detected import pose in the toast. Real .vrm files
     // are artist-rigged (no auto-rig), so they get their own honest line.
     const poseTxt = sourceType === 'vrm' ? 'VRM attached — artist-rigged model'
       : pose === 'A' ? 'A-pose detected — rigged for A-pose'
       : pose === 'T' ? 'T-pose detected — rigged for T-pose'
       : 'unusual arm pose — best-effort rig';
+    // v0.43: announce a facing correction when the detector had to turn
+    // the model around (e.g. it was authored facing backwards).
+    const faceTxt = faceDeg && Math.abs(faceDeg) >= 10
+      ? ` — facing auto-corrected ${Math.round(faceDeg)}°` : '';
     toast(
-      `${name} ${updated ? 'updated' : 'added to roster'} — ${poseTxt}`,
+      `${name} ${updated ? 'updated' : 'added to roster'} — ${poseTxt}${faceTxt}`,
       false
     );
     // body-type badge under the import button

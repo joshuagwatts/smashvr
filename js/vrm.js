@@ -12,7 +12,7 @@ export async function loadVRMFile(file) {
   if (ext === 'glb' || ext === 'gltf') {
     // Auto-rig path: static character -> fitted humanoid skeleton.
     // Dynamic import keeps the rigger out of the boot bundle.
-    const { autoRigCharacterFile } = await import('./autorig.js?v=42');
+    const { autoRigCharacterFile } = await import('./autorig.js?v=43');
     return autoRigCharacterFile(file);
   }
   const loader = new GLTFLoader();
@@ -24,13 +24,18 @@ export async function loadVRMFile(file) {
     if (!vrm) throw new Error('No VRM data found in this file.');
     const vrm0 = !!(vrm.meta && vrm.meta.metaVersion === '0');
     if (vrm0) VRMUtils.rotateVRM0(vrm);
-    return { vrm, vrm0 };
+    // v0.43: rotateVRM0 leaves its compensation on scene.rotation.y (PI for
+    // VRM0 — those files face -Z in glTF space). Capture it: attach must
+    // COMPOSE with this base yaw, never overwrite it. Overwriting it is
+    // exactly why every VRM0 import has faced backwards in-game.
+    const baseYaw = vrm.scene.rotation.y || 0;
+    return { vrm, vrm0, baseYaw };
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
-export function attachVRMToFighter(f, { vrm, vrm0, flip }) {
+export function attachVRMToFighter(f, { vrm, vrm0, flip, faceYaw, baseYaw }) {
   removeVRMFromFighter(f); // clean slate
   if (f.rig && f.rig.group) f.rig.group.visible = false;
 
@@ -42,7 +47,16 @@ export function attachVRMToFighter(f, { vrm, vrm0, flip }) {
   const s = 1.7 / h;
   vrm.scene.scale.setScalar(s);
   // v0.12.2: flip turns a backward-authored model around (-90° instead of +90°).
-  vrm.scene.rotation.y = flip ? -Math.PI / 2 : Math.PI / 2; // VRM rest faces +Z -> face +X
+  // v0.43: the rotation COMPOSES three terms instead of overwriting:
+  //   baseYaw — load-time compensation (rotateVRM0's PI for VRM0 files;
+  //             the pre-v0.43 code overwrote it, so every VRM0 import
+  //             faced backwards — the "cactus boy" bug);
+  //   faceYaw — the import-time measured deviation from facing +Z
+  //             (js/facing.js), subtracted so off-axis models land on +X;
+  //   flip    — the manual Lab toggle, a pure +180° offset
+  //             (PI/2 + PI == -PI/2, identical to the old flip branch).
+  // With baseYaw 0 and faceYaw 0/absent this reproduces the old rotations.
+  vrm.scene.rotation.y = (baseYaw || 0) + Math.PI / 2 - (faceYaw || 0) + (flip ? Math.PI : 0); // VRM rest faces +Z -> face +X
   vrm.scene.position.set(0, -box.min.y * s, 0);
 
   f.root.add(vrm.scene);

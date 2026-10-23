@@ -24,6 +24,7 @@ async function stage() {
     return fs.writeFile(dst, s);
   });
   await rw(path.join(ROOT, 'js/rig.js'), path.join(STAGE, 'rig.js'));
+  await rw(path.join(ROOT, 'js/facing.js'), path.join(STAGE, 'facing.js'));
   await rw(path.join(ROOT, 'js/budget.js'), path.join(STAGE, 'budget.js'));
   await rw(path.join(ROOT, 'js/moves.js'), path.join(STAGE, 'moves.js'), [
     ["from './budget.js'", `from '${path.join(STAGE, 'budget.js')}'`],
