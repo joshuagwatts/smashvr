@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=41';
-import { loadVRMFile } from './vrm.js?v=41';
+import { FIGHTER_DEFS } from './moves.js?v=42';
+import { loadVRMFile } from './vrm.js?v=42';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -128,7 +128,7 @@ export async function importCharacter(file) {
   let archetype = null, style = null;
   if (!data.autorig && data.vrm) {
     try {
-      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=41');
+      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=42');
       archetype = analyzeVRM(data.vrm);
       style = assignStyle(archetype);
     } catch (e) { /* analysis failed — default style */ }
@@ -225,7 +225,7 @@ export async function setCustomStyle(defId, styleName) {
     registerDef(entry);
   } else if (entry.archetype) {
     // Revert to auto-detected.
-    const { assignStyle } = await import('./archetype.js?v=41');
+    const { assignStyle } = await import('./archetype.js?v=42');
     entry.style = assignStyle(entry.archetype);
     entry.kit = entry.style.kit;
     registerDef(entry);

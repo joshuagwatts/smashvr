@@ -2,23 +2,23 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=41';
-import { Input } from './input.js?v=41';
-import { sfx } from './audio.js?v=41';
-import { createFighter } from './fighters.js?v=41';
-import { FIGHTER_DEFS } from './moves.js?v=41';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=41';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=41';
-import { openLab } from './lab.js?v=41';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=41';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=41';
+import { createGame } from './engine.js?v=42';
+import { Input } from './input.js?v=42';
+import { sfx } from './audio.js?v=42';
+import { createFighter } from './fighters.js?v=42';
+import { FIGHTER_DEFS } from './moves.js?v=42';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=42';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=42';
+import { openLab } from './lab.js?v=42';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=42';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=42';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=41';
+} from './campaign.js?v=42';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=41';
-import { TouchUI } from './touchui.js?v=41';
+} from './netplay.js?v=42';
+import { TouchUI } from './touchui.js?v=42';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -416,6 +416,47 @@ function wireLobbyTransport() {
   netMsgHandler = (msg, cid) => { if (netLobby) netLobby.onMsg(msg, cid); };
 }
 
+// v0.29: QR invite — the lobby shows a big QR of the invite URL; a phone
+// camera scan opens the game and auto-joins (no typing). The encoder is
+// the vendored Arase lib (js/vendor/qrcode.js, same as LIMBO's couch QR).
+function joinUrlFor(code) {
+  return location.origin + location.pathname + '#net=' + code;
+}
+
+let lastQrCode = '';
+function drawLobbyQr(code) {
+  const cv = $('lobby-qr');
+  if (!cv || typeof window.qrcode !== 'function' || !code || code === lastQrCode) return;
+  try {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(joinUrlFor(code));
+    qr.make();
+    const n = qr.getModuleCount();
+    const quiet = 4; // spec quiet zone — camera scanners need it
+    const scale = Math.max(2, Math.floor(232 / (n + quiet * 2)));
+    const size = (n + quiet * 2) * scale;
+    cv.width = size; cv.height = size;
+    cv.style.width = size + 'px'; cv.style.height = size + 'px';
+    const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, size, size);
+    g.fillStyle = '#000';
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) g.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
+      }
+    }
+    lastQrCode = code;
+  } catch (e) { /* QR is an enhancement — code entry still works */ }
+}
+
+// QR / invite-link landing: pre-fill from the hash (openOnline), strip the
+// hash so a refresh doesn't re-join a stale room, then join immediately.
+function autoJoinFromLink() {
+  openOnline();
+  history.replaceState(null, '', location.pathname + location.search);
+  joinLobby();
+}
+
 async function createLobby() {
   const name = $('net-name').value.trim() || 'Player';
   setNetName(name);
@@ -486,6 +527,7 @@ async function joinLobby() {
 function renderLobby() {
   if (!netLobby) return;
   $('lobby-code').textContent = netLobby.code;
+  drawLobbyQr(netLobby.code);
   const me = netLobby.myPlayer();
   const list = $('lobby-players');
   list.innerHTML = '';
@@ -601,6 +643,7 @@ function startNetMatch(seed, slots, myIdx) {
 
 function leaveLobby() {
   stopNetTimers();
+  lastQrCode = '';
   if (netLobby) { try { netLobby.leave(); } catch (e) {} }
   netTransport = null; netLobby = null; netDriver = null; netMsgHandler = null;
   if (game && game._net) { destroyGame(); }
@@ -805,7 +848,7 @@ $('btn-lobby-leave').addEventListener('click', () => { sfx.uiMove(); leaveLobby(
 $('btn-net-leave').addEventListener('click', () => { sfx.uiMove(); quitToTitle(); });
 $('btn-copy-link').addEventListener('click', () => {
   if (!netLobby) return;
-  const url = location.origin + location.pathname + '#net=' + netLobby.code;
+  const url = joinUrlFor(netLobby.code);
   const done = () => toast('Invite link copied — send it to your friend');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(url).then(done, () => toast('Copy failed: ' + url, true));
@@ -925,7 +968,8 @@ rosterReady = initRoster().catch((err) => {
 
 show('screen-title');
 // v0.11: invite links carry the lobby code in the hash
-if (location.hash.match(/#net=([A-Z0-9]{6})/i)) openOnline();
+// v0.29: a scanned/opened invite link now auto-joins the room outright
+if (location.hash.match(/#net=([A-Z0-9]{6})/i)) autoJoinFromLink();
 const clock = new THREE.Clock();
 let menuT = 0;
 

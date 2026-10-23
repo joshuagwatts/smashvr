@@ -308,6 +308,9 @@ h3.sel-label { color: var(--dim); letter-spacing: 2px; font-size: 13px; margin: 
   letter-spacing: 8px; color: #7c5cff; font-size: 1.2em;
   border: 1px dashed var(--line); border-radius: 8px; padding: 2px 10px 2px 18px;
 }
+#lobby-qr-wrap { text-align: center; margin: 12px 0 2px; }
+#lobby-qr { background: #fff; border-radius: 10px; image-rendering: pixelated; }
+#lobby-qr-wrap .subtitle { margin-top: 6px; }
 #lobby-players { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
 .lrow {
   display: flex; align-items: center; gap: 10px;

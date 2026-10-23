@@ -9,11 +9,11 @@ import * as THREE from 'three';
 // roster/moves — its registry is empty, isCustom() returns false for every
 // import, and custom portraits silently render the bare procedural rig in
 // the grey placeholder theme instead of the imported VRM.
-import { FIGHTER_DEFS } from './moves.js?v=41';
-import { createFighter } from './fighters.js?v=41';
-import { tickFighterVisual } from './anim.js?v=41';
-import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=41';
-import { attachVRMToFighter } from './vrm.js?v=41';
+import { FIGHTER_DEFS } from './moves.js?v=42';
+import { createFighter } from './fighters.js?v=42';
+import { tickFighterVisual } from './anim.js?v=42';
+import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=42';
+import { attachVRMToFighter } from './vrm.js?v=42';
 
 const SIZE = 220;
 let renderer = null;

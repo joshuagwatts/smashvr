@@ -116,6 +116,10 @@
   <div class="panel wide">
     <h2>LOBBY <span id="lobby-code" class="code-big"></span></h2>
     <p class="subtitle">share the code or <button id="btn-copy-link" class="btn small">copy invite link</button></p>
+    <div id="lobby-qr-wrap">
+      <canvas id="lobby-qr" width="232" height="232"></canvas>
+      <p class="subtitle">scan to join — or they enter the code</p>
+    </div>
     <div id="lobby-players"></div>
     <div id="lobby-config" class="hidden">
       <div class="btn-row">
@@ -183,6 +187,7 @@
 
 <div id="toast" class="hidden"></div>
 
-<script type="module" src="./js/main.js?v=41"></script>
+<script src="./js/vendor/qrcode.js?v=42"></script>
+<script type="module" src="./js/main.js?v=42"></script>
 </body>
 </html>
