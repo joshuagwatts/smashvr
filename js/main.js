@@ -2,23 +2,23 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=43';
-import { Input } from './input.js?v=43';
-import { sfx } from './audio.js?v=43';
-import { createFighter } from './fighters.js?v=43';
-import { FIGHTER_DEFS } from './moves.js?v=43';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=43';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=43';
-import { openLab } from './lab.js?v=43';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=43';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=43';
+import { createGame } from './engine.js?v=44';
+import { Input } from './input.js?v=44';
+import { sfx } from './audio.js?v=44';
+import { createFighter } from './fighters.js?v=44';
+import { FIGHTER_DEFS } from './moves.js?v=44';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=44';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=44';
+import { openLab } from './lab.js?v=44';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=44';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=44';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=43';
+} from './campaign.js?v=44';
 import {
-  createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode,
-} from './netplay.js?v=43';
-import { TouchUI } from './touchui.js?v=43';
+  createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode, getRtcConfig,
+} from './netplay.js?v=44';
+import { TouchUI } from './touchui.js?v=44';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -385,7 +385,15 @@ function campaignEnd(result) {
 // v0.11: Trystero P2P lobbies + input-delay lockstep matches.
 
 let netTransport = null, netLobby = null, netDriver = null, netMsgHandler = null;
-let netHelloTimer = 0, netBeatTimer = 0;
+let netHelloTimer = 0, netBeatTimer = 0, netWatchTimer = 0;
+// v0.30: session + sticky join intent. pendingJoin is parsed at boot
+// (query ?join= first, then #net= hash — see parseInviteCode) and again
+// on hashchange; the lobby flow consumes it whenever it's ready, so a
+// slow module load or a late-delivered fragment can't lose the tap
+// that brought the guest here.
+let netSession = null; // { isHost, code, name }
+let pendingJoin = parseInviteCode();
+let netJoinedAt = 0, netRebuilds = 0, netWatchBusy = false;
 const NET_DEFS = ['ronin', 'volt', 'wisp']; // built-ins only online (v1)
 
 function netName() {
@@ -399,17 +407,42 @@ function setNetStatus(t, isErr = false) {
   el.classList.toggle('error', isErr);
 }
 
-function openOnline() {
-  $('net-name').value = netName();
+// v0.30: the invite code can arrive as ?join=CODE (query — survives
+// share pipelines that strip #fragments) or as #net=CODE (the original
+// form, still emitted inside the link as a fallback). Query wins.
+function parseInviteCode() {
+  const q = new URLSearchParams(location.search).get('join');
+  if (q && /^[A-Z0-9]{6}$/i.test(q.trim())) return q.trim().toUpperCase();
   const m = location.hash.match(/#net=([A-Z0-9]{6})/i);
-  if (m) $('net-code').value = m[1].toUpperCase();
+  return m ? m[1].toUpperCase() : null;
+}
+
+// v0.30: prefetch the Trystero strategy modules + TURN creds as soon as
+// the player heads online — Create/Join then reuses the in-flight loads
+// instead of paying full CDN latency inside the join attempt.
+let netWarmed = false;
+function warmNetModules() {
+  if (netWarmed) return;
+  netWarmed = true;
+  for (const u of [
+    'https://esm.sh/@trystero-p2p/torrent@0.25.4',
+    'https://esm.sh/@trystero-p2p/nostr@0.25.4',
+  ]) { try { import(u).catch(() => {}); } catch (e) {} }
+  getRtcConfig();
+}
+
+function openOnline() {
+  warmNetModules();
+  $('net-name').value = netName();
+  const code = parseInviteCode();
+  if (code) $('net-code').value = code;
   setNetStatus('');
   show('screen-online');
 }
 
 function stopNetTimers() {
-  clearInterval(netHelloTimer); clearInterval(netBeatTimer);
-  netHelloTimer = 0; netBeatTimer = 0;
+  clearInterval(netHelloTimer); clearInterval(netBeatTimer); clearInterval(netWatchTimer);
+  netHelloTimer = 0; netBeatTimer = 0; netWatchTimer = 0;
 }
 
 function wireLobbyTransport() {
@@ -420,7 +453,12 @@ function wireLobbyTransport() {
 // camera scan opens the game and auto-joins (no typing). The encoder is
 // the vendored Arase lib (js/vendor/qrcode.js, same as LIMBO's couch QR).
 function joinUrlFor(code) {
-  return location.origin + location.pathname + '#net=' + code;
+  // v0.30: carry the code in BOTH the query (?join=) and the fragment
+  // (#net=). Fragments are commonly stripped when a link travels
+  // through messaging apps / in-app browsers — the guest's game then
+  // opens with NO join intent at all ("opens the game, never joins").
+  // Query params survive those pipelines.
+  return location.origin + location.pathname + '?join=' + code + '#net=' + code;
 }
 
 let lastQrCode = '';
@@ -449,38 +487,134 @@ function drawLobbyQr(code) {
   } catch (e) { /* QR is an enhancement — code entry still works */ }
 }
 
-// QR / invite-link landing: pre-fill from the hash (openOnline), strip the
-// hash so a refresh doesn't re-join a stale room, then join immediately.
+// QR / invite-link landing: pre-fill from the link (openOnline), strip
+// the code from the URL so a refresh doesn't re-join a stale room, then
+// join immediately. The intent stays sticky in pendingJoin — if this
+// attempt fails, the watchdog retries instead of stranding the guest.
 function autoJoinFromLink() {
+  const code = parseInviteCode();
+  if (!code) return;
+  pendingJoin = code;
   openOnline();
-  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete('join');
+    u.hash = '';
+    history.replaceState(null, '', u.pathname + u.search);
+  } catch (e) {}
   joinLobby();
+}
+
+// ------------------------------------------------------------ net watchdog
+// v0.30: LIMBO learned this the hard way and SMASHVR never had it — a
+// single stalled handshake used to be a dead lobby forever. While a
+// session is pre-match, the watchdog checks whether the join actually
+// TOOK (guest: the host's lobby state lists us; host: any peer at all)
+// and rebuilds the transport on the same code when it demonstrably
+// didn't. Rebuilds are capped; a peer connecting resets the counter.
+function transportHooks() {
+  return {
+    onMessage: (msg, cid) => { if (netMsgHandler) netMsgHandler(msg, cid); },
+    onPeerJoin: () => { netRebuilds = 0; renderLobby(); },
+    onPeerLeave: () => renderLobby(),
+  };
+}
+
+function startNetWatchdog() {
+  clearInterval(netWatchTimer);
+  netWatchTimer = setInterval(netWatchTick, 5000);
+}
+
+async function netWatchTick() {
+  if (!netSession || netDriver || netWatchBusy) return;
+  if (!netSession.isHost && netLobby && netLobby.myPlayer()) { pendingJoin = null; return; }
+  const age = Date.now() - netJoinedAt;
+  if (!netSession.isHost) {
+    if (!netLobby && age > 6000 && netRebuilds < 3) return rebuildNet();
+    if (netLobby && !netLobby.myPlayer() && age > 25000 && netRebuilds < 3) return rebuildNet();
+  } else if (netLobby && netTransport && netTransport.peerCount() === 0 && age > 60000 && netRebuilds < 2) {
+    // A waiting host with zero peers is usually just… waiting. Only a
+    // room that's been empty a full minute gets ONE fresh transport —
+    // and never while a guest could be mid-handshake (25s+ headroom).
+    return rebuildNet();
+  }
+}
+
+async function rebuildNet() {
+  if (netWatchBusy || !netSession) return;
+  netWatchBusy = true;
+  netRebuilds++;
+  const { isHost, code, name } = netSession;
+  const config = netLobby && isHost ? { ...netLobby.config } : null;
+  toast(`Connection stalled — retrying (${netRebuilds}/${isHost ? 2 : 3})…`);
+  try {
+    if (netTransport) { try { netTransport.leave(); } catch (e) {} }
+    netTransport = null; netLobby = null;
+    stopNetTimers();
+    if (isHost) { await connectHost(code, name, config); renderLobby(); }
+    else await connectGuest(code, name);
+  } catch (err) {
+    netJoinedAt = Date.now(); // back off a full window before the next try
+    setNetStatus('Could not join: ' + err.message, true);
+  } finally {
+    netWatchBusy = false;
+    // if the rebuild died before connect* could restart the watchdog
+    // (e.g. transport creation threw), re-arm it so retries continue
+    if (netSession && !netWatchTimer) startNetWatchdog();
+  }
+}
+
+async function connectHost(code, name, config) {
+  netTransport = await createNetTransport(code, transportHooks());
+  netLobby = new Lobby(netTransport, { isHost: true, name, code });
+  if (config) netLobby.config = { ...netLobby.config, ...config };
+  netLobby.players.push({ cid: netTransport.cid, name, idx: 0, def: 'ronin', ready: false });
+  netLobby.onChange = renderLobby;
+  netLobby.onStart = null; // host starts via hostStart()
+  netLobby.onKicked = null;
+  wireLobbyTransport();
+  // host heartbeat: re-broadcast lobby state so staggered joiners catch up
+  stopNetTimers();
+  netBeatTimer = setInterval(() => { if (netLobby && netLobby.isHost) netLobby.broadcast(); }, 3000);
+  startNetWatchdog();
+  netJoinedAt = Date.now();
+  if (DEBUG) { window.__sv.net = window.__sv.net || {}; window.__sv.net.lobby = netLobby; window.__sv.net.transport = netTransport; }
+}
+
+async function connectGuest(code, name) {
+  netTransport = await createNetTransport(code, transportHooks());
+  netLobby = new Lobby(netTransport, { isHost: false, name, code });
+  netLobby.onChange = renderLobby;
+  netLobby.onStart = (seed, slots) => {
+    const me = netLobby.myPlayer();
+    if (me) startNetMatch(seed, slots, me.idx);
+  };
+  netLobby.onKicked = () => { leaveLobby(); toast('Kicked from lobby', true); };
+  wireLobbyTransport();
+  netLobby.hello();
+  // staggered join: re-hello until the host's lobby state lists us
+  stopNetTimers();
+  netHelloTimer = setInterval(() => {
+    if (!netLobby || netLobby.myPlayer()) { clearInterval(netHelloTimer); netHelloTimer = 0; return; }
+    netLobby.hello();
+  }, 2000);
+  startNetWatchdog();
+  netJoinedAt = Date.now();
+  if (DEBUG) { window.__sv.net = window.__sv.net || {}; window.__sv.net.lobby = netLobby; window.__sv.net.transport = netTransport; }
 }
 
 async function createLobby() {
   const name = $('net-name').value.trim() || 'Player';
   setNetName(name);
   const code = lobbyCode();
+  netSession = { isHost: true, code, name };
+  netRebuilds = 0;
   setNetStatus('Creating lobby…');
   try {
-    netTransport = await createNetTransport(code, {
-      onMessage: (msg, cid) => { if (netMsgHandler) netMsgHandler(msg, cid); },
-      onPeerJoin: () => renderLobby(),
-      onPeerLeave: () => renderLobby(),
-    });
-    netLobby = new Lobby(netTransport, { isHost: true, name, code });
-    netLobby.players.push({ cid: netTransport.cid, name, idx: 0, def: 'ronin', ready: false });
-    netLobby.onChange = renderLobby;
-    netLobby.onStart = null; // host starts via hostStart()
-    netLobby.onKicked = null;
-    wireLobbyTransport();
-    // host heartbeat: re-broadcast lobby state so staggered joiners catch up
-    stopNetTimers();
-    netBeatTimer = setInterval(() => { if (netLobby && netLobby.isHost) netLobby.broadcast(); }, 3000);
+    await connectHost(code, name, null);
     setNetStatus('');
     show('screen-lobby');
     renderLobby();
-    if (DEBUG) { window.__sv.net = window.__sv.net || {}; window.__sv.net.lobby = netLobby; window.__sv.net.transport = netTransport; }
     sfx.select();
   } catch (err) {
     setNetStatus('Could not create lobby: ' + err.message, true);
@@ -492,35 +626,21 @@ async function joinLobby() {
   if (!/^[A-Z0-9]{6}$/.test(code)) { setNetStatus('Enter the 6-character code', true); return; }
   const name = $('net-name').value.trim() || 'Player';
   setNetName(name);
+  netSession = { isHost: false, code, name };
+  netRebuilds = 0;
   setNetStatus('Joining lobby ' + code + '…');
   try {
-    netTransport = await createNetTransport(code, {
-      onMessage: (msg, cid) => { if (netMsgHandler) netMsgHandler(msg, cid); },
-      onPeerJoin: () => renderLobby(),
-      onPeerLeave: () => renderLobby(),
-    });
-    netLobby = new Lobby(netTransport, { isHost: false, name, code });
-    netLobby.onChange = renderLobby;
-    netLobby.onStart = (seed, slots) => {
-      const me = netLobby.myPlayer();
-      if (me) startNetMatch(seed, slots, me.idx);
-    };
-    netLobby.onKicked = () => { leaveLobby(); toast('Kicked from lobby', true); };
-    wireLobbyTransport();
-    netLobby.hello();
-    // staggered join: re-hello until the host's lobby state lists us
-    stopNetTimers();
-    netHelloTimer = setInterval(() => {
-      if (!netLobby || netLobby.myPlayer()) { clearInterval(netHelloTimer); netHelloTimer = 0; return; }
-      netLobby.hello();
-    }, 2000);
+    await connectGuest(code, name);
     setNetStatus('');
     show('screen-lobby');
     renderLobby();
-    if (DEBUG) { window.__sv.net = window.__sv.net || {}; window.__sv.net.lobby = netLobby; window.__sv.net.transport = netTransport; }
     sfx.select();
   } catch (err) {
-    setNetStatus('Could not join: ' + err.message, true);
+    // v0.30: a failed attempt is no longer terminal — the watchdog
+    // retries the join while the session intent stands.
+    setNetStatus('Could not join: ' + err.message + ' — retrying…', true);
+    netJoinedAt = Date.now();
+    startNetWatchdog();
   }
 }
 
@@ -643,6 +763,7 @@ function startNetMatch(seed, slots, myIdx) {
 
 function leaveLobby() {
   stopNetTimers();
+  netSession = null; pendingJoin = null; netRebuilds = 0;
   lastQrCode = '';
   if (netLobby) { try { netLobby.leave(); } catch (e) {} }
   netTransport = null; netLobby = null; netDriver = null; netMsgHandler = null;
@@ -839,7 +960,13 @@ $('btn-2p').addEventListener('click', () => { sfx.select(); openSelect('versus')
 $('btn-campaign').addEventListener('click', () => { sfx.select(); openCampaign(); });
 // v0.11: online netplay
 $('btn-online').addEventListener('click', () => { sfx.select(); openOnline(); });
-$('btn-online-back').addEventListener('click', () => { sfx.uiMove(); show('screen-title'); });
+$('btn-online-back').addEventListener('click', () => {
+  sfx.uiMove();
+  // v0.30: backing out of the online screen cancels a pending join
+  // session (incl. watchdog retries) — but never an active lobby.
+  if (!netLobby) { netSession = null; pendingJoin = null; stopNetTimers(); }
+  show('screen-title');
+});
 $('btn-net-create').addEventListener('click', () => { sfx.select(); createLobby(); });
 $('btn-net-join').addEventListener('click', () => { sfx.select(); joinLobby(); });
 $('net-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinLobby(); });
@@ -973,7 +1100,16 @@ rosterReady = initRoster().catch((err) => {
 show('screen-title');
 // v0.11: invite links carry the lobby code in the hash
 // v0.29: a scanned/opened invite link now auto-joins the room outright
-if (location.hash.match(/#net=([A-Z0-9]{6})/i)) autoJoinFromLink();
+// v0.30: the code may arrive as ?join=CODE (query survives share
+// pipelines that strip #fragments); the intent is sticky (pendingJoin,
+// parsed at module init) and a fragment that only lands later — link
+// tapped while the game is already open, in-app browser delivering
+// the hash after load — is honored via hashchange.
+if (pendingJoin) autoJoinFromLink();
+window.addEventListener('hashchange', () => {
+  if (netSession || netDriver) return;
+  if (parseInviteCode()) autoJoinFromLink();
+});
 const clock = new THREE.Clock();
 let menuT = 0;
 

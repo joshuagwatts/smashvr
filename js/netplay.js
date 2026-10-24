@@ -16,9 +16,9 @@
 //    verified over fake channels (test/netproto.mjs) and the signaling layer
 //    is verified as far as headless allows. Two real devices are ground truth.
 
-import { packInput, unpackInput, PACKED_BLANK, lobbyCode } from './rng.js?v=43';
-import { TICK, readHuman } from './engine.js?v=43';
-import { sfx } from './audio.js?v=43';
+import { packInput, unpackInput, PACKED_BLANK, lobbyCode } from './rng.js?v=44';
+import { TICK, readHuman } from './engine.js?v=44';
+import { sfx } from './audio.js?v=44';
 
 export const NET_DELAY = 3;       // input delay, ticks
 export const HASH_EVERY = 60;     // state-hash cadence, ticks
@@ -126,15 +126,20 @@ export async function createNetTransport(roomCode, hooks) {
   // CGNAT especially) can signal fine yet never connect — "codes don't
   // connect". rtcConfig replaces the defaults wholesale in Trystero
   // core, so buildIceServers carries the STUN entries too.
+  // v0.30: fetch the TURN creds AND both strategy module graphs in
+  // PARALLEL. The old sequential awaits made a cold guest wait the SUM
+  // of two esm.sh graph loads (~25s observed) staring at "Joining
+  // lobby…" before a single socket opened; now it's the max.
   const rtcConfig = await getRtcConfig();
+  const modResults = await Promise.all(loads.map(([name, url]) =>
+    import(url).then((mod) => ({ name, mod }), (err) => ({ name, err }))));
   let ok = 0;
   const stratErrs = [];
   const sendFns = [];
   const leaveFns = [];
   const peerIds = new Set(); // strategy peer ids currently joined (any strategy)
-  for (const [name, url] of loads) {
-    let mod = null;
-    try { mod = await import(url); } catch (e) { stratErrs.push(name + ':import:' + e.message); continue; }
+  for (const { name, mod, err } of modResults) {
+    if (err) { stratErrs.push(name + ':import:' + err.message); continue; }
     if (!mod) continue;
     try {
       // Trystero 0.25.x API: makeAction returns an ACTION OBJECT (not a
