@@ -146,6 +146,19 @@
   If a join wedges, the toast "Connection stalled — retrying" appears
   and it self-recovers; 3 failed retries = the other end isn't there.
 
+## Shipped
+- Commit c1754afab0f1880cafb8f54067161ba680b8326c (15 files: index.html,
+  12 js pin-carriers, test/spectre.mjs, these notes). Pages serving
+  ?v=44; ALL live files byte-identical to the shipped tree (cmp over
+  index.html + css + js/*), and served main.js contains the ?join=
+  emitter. Post-bump smoke on this exact tree: boots at ?v=44, host
+  lobby + guest auto-join via ?join= URL, zero page errors.
+- Tests post-fix: moveset/combo/spectre PASS, determinism 6/6,
+  test_logic 14/14, touch_input 17/17, hitbox_sync 712-sample PASS,
+  facing 22/22; netproto 13+1 = baseline (pre-existing input-delay
+  fail, protocol untouched); autorig 70+4 = baseline; signaling /
+  lobby_ui crash identically to baseline (environment).
+
 ## Fix plan
 1. ?join=CODE query param: joinUrlFor emits BOTH (?join=CODE#net=CODE);
    boot reads query first, then hash. Query survives share pipelines
