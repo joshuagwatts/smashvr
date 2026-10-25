@@ -2,23 +2,23 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=44';
-import { Input } from './input.js?v=44';
-import { sfx } from './audio.js?v=44';
-import { createFighter } from './fighters.js?v=44';
-import { FIGHTER_DEFS } from './moves.js?v=44';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=44';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=44';
-import { openLab } from './lab.js?v=44';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=44';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=44';
+import { createGame } from './engine.js?v=45';
+import { Input } from './input.js?v=45';
+import { sfx } from './audio.js?v=45';
+import { createFighter } from './fighters.js?v=45';
+import { FIGHTER_DEFS } from './moves.js?v=45';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=45';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=45';
+import { openLab } from './lab.js?v=45';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=45';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=45';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=44';
+} from './campaign.js?v=45';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode, getRtcConfig,
-} from './netplay.js?v=44';
-import { TouchUI } from './touchui.js?v=44';
+} from './netplay.js?v=45';
+import { TouchUI } from './touchui.js?v=45';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -143,6 +143,33 @@ function defaultSlots(m) {
 let slots = defaultSlots('cpu');
 let selSlot = 0;
 
+// v0.45: P1's fighter pick persists across sessions — an imported VRM (or
+// any pick) simply IS P1's fighter on the next boot; no re-selecting.
+// Saved at every explicit pick (select card, CTRL-cycle moving P1,
+// campaign picker); restored once the IndexedDB customs are back in.
+// A stale pick (fighter since deleted) falls back to the first custom;
+// with no pick at all and exactly one custom imported, that custom is
+// the default — imported means loaded into the game.
+const SEL_KEY = 'smashvr_p1pick';
+function saveP1Pick(defId) {
+  try { localStorage.setItem(SEL_KEY, defId); } catch (e) {}
+}
+function p1PickTarget() {
+  let saved = null;
+  try { saved = localStorage.getItem(SEL_KEY); } catch (e) {}
+  if (saved && FIGHTER_DEFS[saved]) return saved;
+  const customs = Object.keys(FIGHTER_DEFS).filter((d) => FIGHTER_DEFS[d].custom);
+  if (saved) return customs[0] || null;            // pick was deleted -> first custom
+  return customs.length === 1 ? customs[0] : null; // never picked: a lone import wins
+}
+function applyP1Pick() {
+  const pick = p1PickTarget();
+  if (!pick) return;
+  const p1 = slots.find((s) => s.ctrl === 'p1');
+  if (p1) p1.def = pick;
+  campP1 = pick;
+}
+
 function activeSlots() {
   return slots.filter((s) => s.ctrl !== 'closed');
 }
@@ -176,6 +203,7 @@ function defCard(defId) {
   el.addEventListener('click', () => {
     sfx.uiMove();
     slots[selSlot].def = defId;
+    if (slots[selSlot].ctrl === 'p1') saveP1Pick(defId); // v0.45: remember P1's fighter
     refreshSelect();
   });
   return el;
@@ -200,6 +228,8 @@ function slotCard(i) {
       slots.forEach((o, j) => { if (j !== i && o.ctrl === next) o.ctrl = 'cpu'; });
     }
     s.ctrl = next;
+    const p1Now = slots.find((s) => s.ctrl === 'p1'); // v0.45: pick follows the P1 slot
+    if (p1Now) saveP1Pick(p1Now.def);
     refreshSelect();
   });
   const teamBtn = document.createElement('button');
@@ -256,6 +286,7 @@ function openSelect(m) {
   rosterReady.finally(() => {
     // a custom slot may have been deleted while we were away
     slots.forEach((s) => { if (!FIGHTER_DEFS[s.def]) s.def = 'ronin'; });
+    applyP1Pick(); // v0.45: open on P1's remembered fighter
     refreshSelect();
     show('screen-select');
     preRenderPortraits(); // v0.17: warm the portrait cache for the card grid
@@ -307,7 +338,7 @@ function openCampaign() {
   $('btn-coop1').classList.toggle('sel', !campCoop);
   $('btn-coop2').classList.toggle('sel', campCoop);
   $('camp-p2-wrap').classList.toggle('hidden', !campCoop);
-  campFighterRow('camp-p1-cards', campP1, (d) => { campP1 = d; });
+  campFighterRow('camp-p1-cards', campP1, (d) => { campP1 = d; saveP1Pick(d); }); // v0.45: campaign pick persists too
   if (campCoop) campFighterRow('camp-p2-cards', campP2, (d) => { campP2 = d; });
   show('screen-campaign');
 }
@@ -1096,6 +1127,10 @@ rosterReady = initRoster().catch((err) => {
   console.warn('roster init failed:', err);
   toast('Roster restore failed: ' + err.message, true);
 });
+// v0.45: once customs are back, P1's remembered pick (or a lone import)
+// becomes the standing selection — select screen, Lab and campaign all
+// read from these slots.
+rosterReady.finally(() => applyP1Pick());
 
 show('screen-title');
 // v0.11: invite links carry the lobby code in the hash

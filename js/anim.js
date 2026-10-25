@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=44';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=44';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=45';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=45';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -124,18 +124,33 @@ export function locomotionPose(f, t) {
         break;
       }
       case 'jump': {
-        P.upperArmR = [0, 0, 1.7]; P.upperArmL = [0, 0, -1.7];
-        P.lowerArmR = [0, 0, 0.5]; P.lowerArmL = [0, 0, -0.5];
+        // v0.45: rippling rise instead of a frozen ±1.7 pin.
+        P.upperArmR = [0, 0, 1.7 + Math.sin(t * 4.6) * 0.16];
+        P.upperArmL = [0, 0, -1.7 + Math.sin(t * 4.6 + 0.8) * 0.16];
+        P.lowerArmR = [0, 0, 0.5 + Math.sin(t * 4.6 - 1.1) * 0.14];
+        P.lowerArmL = [0, 0, -0.5 + Math.sin(t * 4.6 - 0.3) * 0.14];
         P.spine = [0, 0, -0.12];
         P.head = [0, 0, -0.1];
         break;
       }
       case 'airdodge':
       case 'fall': {
-        P.upperArmR = [0, 0, 2.2]; P.lowerArmR = [0, 0, 0.5];
-        P.upperArmL = [0, 0, -2.2]; P.lowerArmL = [0, 0, -0.5];
-        P.spine = [0, 0, 0.05];
-        P.head = [0, 0, -0.12];
+        // v0.45: gliding ripple, same language as the biped fall — both
+        // arms stream back together and wave out of phase with fall
+        // speed instead of a constant mirrored ±2.2 pin.
+        const ramp = Math.min(1, sf / 10);
+        const ease = ramp * ramp * (3 - 2 * ramp);
+        const fiN = Math.min(1, Math.max(0, -(f.vy || 0)) / Math.max(0.03, (f.fallSpeed || 0.3) * 0.62));
+        const freq = 4.8 + 3.2 * fiN;
+        const amp = (0.15 + 0.22 * fiN) * (0.3 + 0.7 * ease);
+        const sweep = -(1.50 + 0.60 * fiN);
+        const trail = -0.20 - 0.20 * fiN;
+        P.upperArmR = [0, 0, sweep + 0.14 + Math.sin(t * freq) * amp];
+        P.lowerArmR = [0, 0, trail + Math.sin(t * freq - 1.15) * amp * 1.2];
+        P.upperArmL = [0, 0, sweep - 0.14 + Math.sin(t * freq + 0.8) * amp];
+        P.lowerArmL = [0, 0, trail + Math.sin(t * freq - 0.35) * amp * 1.2];
+        P.spine = [0, 0, 0.05 + 0.04 * Math.sin(t * freq * 0.5)];
+        P.head = [0, 0, -0.12 + 0.05 * Math.sin(t * freq * 0.5 + 1)];
         break;
       }
       default:
@@ -186,18 +201,45 @@ function locomotionPoseBiped(f, t) {
       P.lowerLegR = [0, 0, -1.8 + ext * 1.9];
       P.upperLegL = [0, 0, 0.7 - ext * 0.85];
       P.lowerLegL = [0, 0, -1.6 + ext * 1.7];
-      P.upperArmR = [0, 0, 1.5 - ext * 0.6];
-      P.upperArmL = [0, 0, -1.5 + ext * 0.6];
+      // v0.45: after the launch extension decays, the arms keep riding
+      // the air — a soft ripple instead of freezing at ±1.5 all the way up.
+      const jw = (1 - ext) * 0.15;
+      P.upperArmR = [0, 0, 1.5 - ext * 0.6 + Math.sin(t * 4.6) * jw];
+      P.upperArmL = [0, 0, -1.5 + ext * 0.6 + Math.sin(t * 4.6 + 0.8) * jw];
+      P.lowerArmR = [0, 0, 0.3 * (1 - ext) + Math.sin(t * 4.6 - 1.1) * jw];
+      P.lowerArmL = [0, 0, -0.3 * (1 - ext) + Math.sin(t * 4.6 - 0.3) * jw];
       P.spine = [0, 0, -0.2 + ext * 0.12];
       break;
     }
     case 'airdodge':
     case 'fall': {
-      P.upperArmR = [0, 0, 2.3]; P.lowerArmR = [0, 0, 0.4];
-      P.upperArmL = [0, 0, -2.3]; P.lowerArmL = [0, 0, -0.4];
-      P.upperLegR = [0, 0, 0.35]; P.lowerLegR = [0, 0, -0.5];
-      P.upperLegL = [0, 0, -0.25]; P.lowerLegL = [0, 0, 0.4];
-      P.head = [0, 0, -0.15];
+      // v0.45: FLYING ARMS — was a constant ±2.3 mirrored pin: from the
+      // game camera that draws one straight frozen line through the
+      // shoulders (a T). Now BOTH arms stream back together like a
+      // glider's swept wings (same-sign z — a deliberate break from the
+      // mirrored stance convention), a ripple runs shoulder -> forearm,
+      // the arms sit ~0.3 rad apart out of phase so they scissor instead
+      // of locking, and the sweep presses harder + ripples faster the
+      // faster the fall. sf ramps the gesture in (no snap on entry; the
+      // state crossfade covers the exit).
+      const ramp = Math.min(1, sf / 10);
+      const ease = ramp * ramp * (3 - 2 * ramp);
+      const fiN = Math.min(1, Math.max(0, -(f.vy || 0)) / Math.max(0.05, f.fallSpeed || 0.3));
+      const sweep = -(1.55 + 0.55 * fiN); // negative z = swung back, up-streaming
+      const freq = 5.2 + 3.8 * fiN;
+      const amp = (0.17 + 0.27 * fiN) * (0.3 + 0.7 * ease);
+      const splay = (0.10 + 0.16 * fiN) * ease;
+      const trail = -0.22 - 0.22 * fiN; // forearm continues the sweep
+      P.upperArmR = [-splay + 0.05 * Math.sin(t * freq * 0.5), 0, sweep + 0.16 + Math.sin(t * freq) * amp];
+      P.upperArmL = [splay - 0.05 * Math.sin(t * freq * 0.5 + 0.8), 0, sweep - 0.16 + Math.sin(t * freq + 0.8) * amp];
+      P.lowerArmR = [0, 0, trail + Math.sin(t * freq - 1.15) * amp * 1.25]; // forearm trails the wave
+      P.lowerArmL = [0, 0, trail + Math.sin(t * freq - 0.35) * amp * 1.25];
+      P.upperLegR = [0, 0, 0.32 + 0.13 * Math.sin(t * freq * 0.6 + 0.5)];
+      P.lowerLegR = [0, 0, -0.48 + 0.16 * Math.sin(t * freq * 0.6 - 0.7)];
+      P.upperLegL = [0, 0, -0.24 + 0.13 * Math.sin(t * freq * 0.6 + 2.3)];
+      P.lowerLegL = [0, 0, 0.40 + 0.16 * Math.sin(t * freq * 0.6 + 1.1)];
+      P.spine = [0, 0, 0.03 + 0.035 * Math.sin(t * freq * 0.5)];
+      P.head = [0, 0, -0.15 + 0.05 * Math.sin(t * freq * 0.5 + 1)];
       break;
     }
     case 'squat':
@@ -228,9 +270,19 @@ function locomotionPoseBiped(f, t) {
       break;
     }
     case 'helpless': {
-      P.upperArmR = [0, 0, 1.7]; P.upperArmL = [0, 0, -1.7];
-      P.upperLegR = [0, 0, 0.5]; P.upperLegL = [0, 0, -0.5];
-      P.spine = [0, 0, 0.15]; P.head = [0, 0, -0.25];
+      // v0.45: helpless tumbles — arms flail wide and slow, out of phase,
+      // legs paddle. Was a static ±1.7 pin.
+      const w1 = Math.sin(t * 3.3), w2 = Math.sin(t * 3.3 + 1.4);
+      P.upperArmR = [0.18 * w2, 0, 1.72 + 0.40 * w1];
+      P.upperArmL = [-0.18 * w1, 0, -1.72 + 0.40 * w2];
+      P.lowerArmR = [0, 0, 0.55 + 0.48 * Math.sin(t * 3.3 - 1.0)];
+      P.lowerArmL = [0, 0, -0.55 + 0.48 * Math.sin(t * 3.3 + 0.4)];
+      P.upperLegR = [0, 0, 0.5 + 0.24 * Math.sin(t * 2.6 + 1.0)];
+      P.lowerLegR = [0, 0, -0.3 + 0.28 * Math.sin(t * 2.6 + 0.2)];
+      P.upperLegL = [0, 0, -0.5 + 0.24 * Math.sin(t * 2.6 + 4.1)];
+      P.lowerLegL = [0, 0, 0.3 + 0.28 * Math.sin(t * 2.6 + 3.3)];
+      P.spine = [0, 0, 0.15 + 0.06 * Math.sin(t * 1.9)];
+      P.head = [0, 0, -0.25 + 0.07 * Math.sin(t * 1.9 + 1)];
       break;
     }
     case 'dead': {
