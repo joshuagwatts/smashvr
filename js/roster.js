@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=45';
-import { loadVRMFile } from './vrm.js?v=45';
+import { FIGHTER_DEFS } from './moves.js?v=46';
+import { loadVRMFile } from './vrm.js?v=46';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -130,7 +130,7 @@ async function detectRecordFacing(data) {
   }
   if (data.vrm) {
     try {
-      const { detectFacingVRM } = await import('./facing.js?v=45');
+      const { detectFacingVRM } = await import('./facing.js?v=46');
       const det = detectFacingVRM(data.vrm);
       return { faceYaw: det.yaw || 0, faceDeg: det.deg || 0 };
     } catch (e) { /* detection best-effort */ }
@@ -150,7 +150,7 @@ export async function importCharacter(file) {
   let archetype = null, style = null;
   if (!data.autorig && data.vrm) {
     try {
-      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=45');
+      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=46');
       archetype = analyzeVRM(data.vrm);
       style = assignStyle(archetype);
     } catch (e) { /* analysis failed — default style */ }
@@ -266,7 +266,7 @@ export async function setCustomStyle(defId, styleName) {
     registerDef(entry);
   } else if (entry.archetype) {
     // Revert to auto-detected.
-    const { assignStyle } = await import('./archetype.js?v=45');
+    const { assignStyle } = await import('./archetype.js?v=46');
     entry.style = assignStyle(entry.archetype);
     entry.kit = entry.style.kit;
     registerDef(entry);

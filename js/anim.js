@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=45';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=45';
+import { BONE_NAMES, VRM_BONE_MAP, buildProceduralRig } from './rig.js?v=46';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=46';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -386,114 +386,182 @@ function locomotionPoseBiped(f, t) {
   return P;
 }
 
+// v0.46: fighter-space ("chain") pose math. The engine mirrors the fighter
+// root for facing (engine.js: root.scale.x = modScale * facing — a NEGATIVE
+// determinant). THREE's getWorldQuaternion decomposes world matrices
+// assuming proper rotations; under the mirror the extracted quaternions are
+// reflection-contaminated, and composing world-space deltas from them
+// twisted VRM skeletons whenever a fighter faced left (arms wrenched down,
+// torso yawed sideways) — the procedural rig was immune because it is posed
+// in local space. So all retargeting below composes LOCAL transforms up
+// the chain to the fighter root and never reads a world matrix: the mirror
+// applies to the finished pose at the root, exactly as for the rig.
+// (Facing +1 numbers are unchanged: the root rotation is identity there,
+// so chain space == the old world space.)
+const _chainNodes = [];
+const _cm = new THREE.Matrix4();
+const _cm2 = new THREE.Matrix4();
+function chainNodes(node, stop) {
+  _chainNodes.length = 0;
+  let n = node;
+  while (n && n !== stop) { _chainNodes.push(n); n = n.parent; }
+  return _chainNodes; // [node ... topChild] — consume immediately
+}
+function chainQuat(node, stop, out) {
+  const arr = chainNodes(node, stop);
+  out.identity();
+  for (let i = arr.length - 1; i >= 0; i--) out.multiply(arr[i].quaternion);
+  return out;
+}
+function chainPos(node, stop, out) {
+  if (!node) return out.set(0, 0, 0);
+  const arr = chainNodes(node, stop);
+  _cm.identity();
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const n = arr[i];
+    _cm.multiply(_cm2.compose(n.position, n.quaternion, n.scale));
+  }
+  return out.setFromMatrixPosition(_cm);
+}
+
+// Pose a rig's bones from an euler dict (the procedural local-space path).
+// mirrorYaw: facing is a root mirror, which flips yaw — the torso blade
+// counter-mirrors so you see the chest whether facing left or right.
+function poseRigLocals(rigBones, eulerDict, mirrorYaw) {
+  const yawBones = { spine: 1, chest: 1, neck: 1, head: 1, hips: 1 };
+  for (const b of BONE_NAMES) {
+    const e = eulerDict[b];
+    if (!e || !rigBones[b]) continue;
+    if (mirrorYaw && yawBones[b]) rigBones[b].rotation.set(e[0], -e[1], e[2]);
+    else rigBones[b].rotation.set(e[0], e[1], e[2]);
+  }
+}
+
+// Capture a rig's rest (all-identity locals) chain quats + arm chain dirs,
+// in fighter space. Rig locals are restored exactly as found.
+function restChain(rigBones, stop) {
+  const saved = {};
+  for (const b of BONE_NAMES) {
+    if (!rigBones[b]) continue;
+    saved[b] = rigBones[b].quaternion.clone();
+    rigBones[b].quaternion.identity();
+  }
+  const cache = { quat: {}, dir: {} };
+  for (const b of BONE_NAMES) {
+    if (!rigBones[b]) continue;
+    cache.quat[b] = chainQuat(rigBones[b], stop, new THREE.Quaternion());
+  }
+  // rest bone directions (bone -> child, fighter space) for arm normalization
+  for (const [upper, lower, hand] of ARM_CHAINS) {
+    for (const [bone, child] of [[upper, lower], [lower, hand]]) {
+      if (!rigBones[bone] || !rigBones[child]) continue;
+      chainPos(rigBones[bone], stop, _v1);
+      chainPos(rigBones[child], stop, _v2);
+      cache.dir[bone] = _v2.sub(_v1).normalize().clone();
+    }
+  }
+  for (const b of BONE_NAMES) {
+    if (saved[b]) rigBones[b].quaternion.copy(saved[b]);
+  }
+  return cache;
+}
+
+// v0.46: shared reference rig for VRM-only fighter records (no f.rig) —
+// posing used to silently no-op without one (`if (!f.rig) return`), which
+// is exactly what the v0.12 autorig tests construct: every pose came out as
+// raw rest. The reference rig is posed with the same dict (nobody renders
+// it) purely as the delta source.
+let _refRig = null, _refRigVariant = null, _refRigRest = null;
+function referenceRig(bodyType) {
+  const variant = bodyType === 'floater' ? 'wisp' : 'ronin';
+  if (!_refRig || _refRigVariant !== variant) {
+    _refRig = buildProceduralRig({ primary: 0xffffff, secondary: 0xffffff }, variant);
+    _refRigVariant = variant;
+    _refRigRest = restChain(_refRig.bones, _refRig.group.parent);
+  }
+  return _refRig;
+}
+
 export function applyPose(f, eulerDict) {
-  // v0.13.2: VRM via WORLD-DELTA. Pose the procedural rig, then for each VRM
-  // bone: VRM_world = VRM_rest_world · (Proc_rest_world⁻¹ · Proc_posed_world).
-  // This applies the procedural's world-space rotation delta to the VRM's
-  // rest, preserving the VRM's natural bone roll (no twists).
   const doProcedural = () => {
     // v0.13.4: facing is a root mirror (scale.x = -1), which flips yaw.
-    // The torso blade (chest toward camera) must counter-mirror so you see
-    // the chest whether facing left or right — not the back.
-    const mirrorYaw = f.facing < 0;
-    const yawBones = { spine: 1, chest: 1, neck: 1, head: 1, hips: 1 };
-    for (const b of BONE_NAMES) {
-      const e = eulerDict[b];
-      if (!e || !f.rig.bones[b]) continue;
-      if (mirrorYaw && yawBones[b]) f.rig.bones[b].rotation.set(e[0], -e[1], e[2]);
-      else f.rig.bones[b].rotation.set(e[0], e[1], e[2]);
-    }
+    poseRigLocals(f.rig.bones, eulerDict, f.facing < 0);
   };
-  // Procedural rest world quats + bone dirs (captured once per fighter).
-  function procRestWorld() {
+  // Procedural rest chain quats + bone dirs (captured once per fighter).
+  function procRestChain() {
     if (f._procRestW) return f._procRestW;
-    const saved = {};
-    for (const b of BONE_NAMES) {
-      if (!f.rig.bones[b]) continue;
-      saved[b] = f.rig.bones[b].quaternion.clone();
-      f.rig.bones[b].quaternion.identity();
-    }
-    f.rig.group.updateMatrixWorld(true);
-    const cache = { quat: {}, dir: {} };
-    for (const b of BONE_NAMES) {
-      if (!f.rig.bones[b]) continue;
-      cache.quat[b] = new THREE.Quaternion();
-      f.rig.bones[b].getWorldQuaternion(cache.quat[b]);
-    }
-    // v0.15: rest bone directions (bone -> child, world) for arm normalization.
-    for (const [upper, lower, hand] of ARM_CHAINS) {
-      for (const [bone, child] of [[upper, lower], [lower, hand]]) {
-        if (!f.rig.bones[bone] || !f.rig.bones[child]) continue;
-        f.rig.bones[bone].getWorldPosition(_v1);
-        f.rig.bones[child].getWorldPosition(_v2);
-        cache.dir[bone] = _v2.sub(_v1).normalize().clone();
-      }
-    }
-    for (const b of BONE_NAMES) {
-      if (saved[b]) f.rig.bones[b].quaternion.copy(saved[b]);
-    }
-    f._procRestW = cache;
-    return cache;
+    f._procRestW = restChain(f.rig.bones, f.rig.group.parent);
+    return f._procRestW;
   }
   // v0.15: rotate a VRM arm bone so its rest direction matches the
   // procedural's (hanging). Pure swing (shortest arc), preserves twist.
-  function normalizeVrmArm(humanoid, bone, child, procDir) {
+  // (v0.46: composed in fighter space — see the note above.)
+  function normalizeVrmArm(humanoid, bone, child, procDir, stopV) {
     const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[bone]);
     const vc = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[child]);
     if (!vb || !vc || !procDir) return;
-    vb.getWorldPosition(_v1);
-    vc.getWorldPosition(_v2);
+    chainPos(vb, stopV, _v1);
+    chainPos(vc, stopV, _v2);
     _v3.copy(_v2).sub(_v1);
     if (_v3.lengthSq() < 1e-10) return;
     _v3.normalize();
     _m1.setFromUnitVectors(_v3, procDir); // swing only
     if (Math.abs(_m1.w - 1) < 1e-6) return; // already aligned
-    vb.parent.getWorldQuaternion(_q2); // P
+    chainQuat(vb.parent, stopV, _q2); // P (fighter space)
     _q1.copy(vb.quaternion); // save L_old (must not clobber before use)
     // L_new = P^-1 * M * P * L_old
     vb.quaternion.copy(_q2).invert().multiply(_m1).multiply(_q2).multiply(_q1);
   }
   if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
     const humanoid = f.vrm.vrm.humanoid;
-    if (!f.rig) return;
-    const procRest = procRestWorld();
-    // VRM rest world (after reset)
+    const vrmScene = f.vrm.vrm.scene;
+    const stopV = vrmScene ? vrmScene.parent : null;
+    // Reference rig: the fighter's own rig, or the shared stand-in.
+    let refBones, refRest, refStop;
+    if (f.rig) {
+      refRest = procRestChain();
+      doProcedural();
+      refBones = f.rig.bones;
+      refStop = f.rig.group.parent;
+    } else {
+      const rr = referenceRig(f.bodyType);
+      for (const b of BONE_NAMES) if (rr.bones[b]) rr.bones[b].quaternion.identity();
+      poseRigLocals(rr.bones, eulerDict, f.facing < 0);
+      refBones = rr.bones;
+      refRest = _refRigRest;
+      refStop = rr.group.parent;
+    }
+    // VRM rest in fighter space (after reset)
     humanoid.resetNormalizedPose();
-    f.vrm.vrm.scene.updateMatrixWorld(true);
     // v0.15: normalize arm rest to the procedural's hanging arms, root-to-tip.
     // Without this, T-pose/A-pose imports keep their arms out and never take
     // the fighting stance — "more like Ronin" needs the same rest.
     for (const [upper, lower, hand] of ARM_CHAINS) {
-      normalizeVrmArm(humanoid, upper, lower, procRest.dir[upper]);
-      f.vrm.vrm.scene.updateMatrixWorld(true);
-      normalizeVrmArm(humanoid, lower, hand, procRest.dir[lower]);
-      f.vrm.vrm.scene.updateMatrixWorld(true);
+      normalizeVrmArm(humanoid, upper, lower, refRest.dir[upper], stopV);
+      normalizeVrmArm(humanoid, lower, hand, refRest.dir[lower], stopV);
     }
     const vrmRest = {};
     for (const b of BONE_NAMES) {
       const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
       if (!vb) continue;
-      vrmRest[b] = new THREE.Quaternion();
-      vb.getWorldQuaternion(vrmRest[b]);
+      vrmRest[b] = chainQuat(vb, stopV, new THREE.Quaternion());
     }
-    // Pose procedural
-    doProcedural();
-    f.rig.group.updateMatrixWorld(true);
-    // Apply world deltas
+    // Apply fighter-space deltas: posed = D * rest, D = rest^-1 * posed.
     for (const b of BONE_NAMES) {
       const vrmBone = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
-      const procBone = f.rig.bones[b];
-      if (!vrmBone || !procBone || !procRest.quat[b] || !vrmRest[b]) continue;
-      procBone.getWorldQuaternion(_q1); // proc posed world
-      // D = procRest⁻¹ · procPosed (world-space delta)
-      _q2.copy(procRest.quat[b]).invert().multiply(_q1);
-      // VRM posed world = D · vrmRest (delta in WORLD frame, not local!)
+      const procBone = refBones[b];
+      if (!vrmBone || !procBone || !refRest.quat[b] || !vrmRest[b]) continue;
+      chainQuat(procBone, refStop, _q1); // proc posed (fighter space)
+      // D = procRest^-1 * procPosed (fighter-space delta)
+      _q2.copy(refRest.quat[b]).invert().multiply(_q1);
+      // VRM posed (fighter space) = D * vrmRest
       _q1.copy(_q2).multiply(vrmRest[b]);
-      // Convert to local
-      vrmBone.parent.getWorldQuaternion(_q2);
+      // Convert to local. The parent chain is re-read live: BONE_NAMES is
+      // root-to-tip, so ancestors already hold their new locals.
+      chainQuat(vrmBone.parent, stopV, _q2);
       vrmBone.quaternion.copy(_q2).invert().multiply(_q1);
     }
-    f.vrm.vrm.scene.updateMatrixWorld(true);
+    if (vrmScene) vrmScene.updateMatrixWorld(true);
   } else if (f.rig) {
     doProcedural();
   }
