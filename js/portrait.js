@@ -9,11 +9,11 @@ import * as THREE from 'three';
 // roster/moves — its registry is empty, isCustom() returns false for every
 // import, and custom portraits silently render the bare procedural rig in
 // the grey placeholder theme instead of the imported VRM.
-import { FIGHTER_DEFS } from './moves.js?v=47';
-import { createFighter } from './fighters.js?v=47';
-import { tickFighterVisual } from './anim.js?v=47';
-import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=47';
-import { attachVRMToFighter } from './vrm.js?v=47';
+import { FIGHTER_DEFS } from './moves.js?v=48';
+import { createFighter } from './fighters.js?v=48';
+import { tickFighterVisual } from './anim.js?v=48';
+import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=48';
+import { attachVRMToFighter } from './vrm.js?v=48';
 
 const SIZE = 220;
 let renderer = null;
@@ -37,11 +37,25 @@ function ensureRenderer() {
   rim.position.set(-3, 2, -2);
   scene.add(rim);
   // v0.17: low hero angle — camera slightly below, looking up at the fighter.
+  // v0.47: FRONT three-quarter framing (Joshua: "make sure the thumbnails
+  // aren't profile too"). Fighters face +X, so the old camera on +Z saw a
+  // pure side profile. The camera now sits off the FACING axis — ~35° from
+  // front toward the model's left — squared-up like a mugshot, not a
+  // silhouette. FRONT_DIR is shared by the stock + custom framing below.
   cam = new THREE.PerspectiveCamera(28, 1, 0.1, 50);
-  cam.position.set(0.6, 0.75, 3.2);
-  cam.lookAt(0, 1.05, 0);
+  cam.position.copy(STOCK_DIR).multiplyScalar(3.3).add(new THREE.Vector3(0, 1.0, 0));
+  cam.lookAt(0, 1.0, 0);
   return true;
 }
+
+// v0.47: the shared front three-quarter view direction (fighter space:
+// +X = facing, +Z = toward the game camera's side). y<0 = low hero angle.
+const FRONT_DIR = new THREE.Vector3(2.4, -0.35, 1.7).normalize();
+// Stock rigs are flat dolls whose decorated front (chest plate, visor)
+// faces +Z — their front three-quarter stays in the +Z hemisphere,
+// angled ~28° toward the facing axis. Customs (real 3D bodies) face +X,
+// so their front three-quarter is the FRONT_DIR above.
+const STOCK_DIR = new THREE.Vector3(1.55, -0.35, 2.85).normalize();
 
 // Pose the fighter in a dynamic "select stance" — a mid-jab for punchers.
 function poseForPortrait(f) {
@@ -101,20 +115,38 @@ async function renderPortrait(defId) {
   if (isCustom(defId)) {
     // v0.28: frame the actual model. Built-ins share one fixed camera, but
     // imported models vary in proportions — fit the posed bounding box so
-    // the whole fighter is in frame, keeping the same low hero angle.
-    const box = new THREE.Box3().setFromObject(f.root);
+    // the whole fighter is in frame, from the same front three-quarter
+    // direction (v0.47). The view is ~35° off the facing axis, so the
+    // on-screen width mixes the model's x/z extents; fit against that
+    // projected width and pad by the projected depth.
+    // precise=true: bound the actual posed skin, not the bind-pose box —
+    // a posed skinned mesh's default box overestimates badly (v0.47).
+    const box = new THREE.Box3().setFromObject(f.root, true);
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
     box.getSize(size);
     box.getCenter(center);
+    // Exact fit: project the 8 bbox corners into the view frame and take
+    // the smallest distance that keeps every corner inside the frustum
+    // (a long accessory — e.g. a backpack arm — must not shrink the
+    // fighter by inflating a padded box fit, v0.47).
     const halfFovTan = Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
-    const dist = Math.max(size.y / 2 / halfFovTan, size.x / 2 / halfFovTan) * 1.12 + size.z / 2;
-    const dir = new THREE.Vector3(0.6, -0.3, 3.2).normalize();
-    cam.position.copy(center).addScaledVector(dir, dist);
+    const right = new THREE.Vector3(FRONT_DIR.z, 0, -FRONT_DIR.x).normalize();
+    const up = new THREE.Vector3().crossVectors(right, FRONT_DIR).negate();
+    let dist = 0;
+    for (const cx of [box.min.x, box.max.x]) for (const cy of [box.min.y, box.max.y]) for (const cz of [box.min.z, box.max.z]) {
+      const off = new THREE.Vector3(cx - center.x, cy - center.y, cz - center.z);
+      const d = off.dot(FRONT_DIR); // toward the camera
+      dist = Math.max(dist,
+        Math.abs(off.dot(right)) / halfFovTan + d,
+        Math.abs(off.dot(up)) / halfFovTan + d);
+    }
+    dist *= 1.06;
+    cam.position.copy(center).addScaledVector(FRONT_DIR, dist);
     cam.lookAt(center.x, center.y, center.z);
   } else {
-    cam.position.set(0.6, 0.75, 3.2);
-    cam.lookAt(0, 1.05, 0);
+    cam.position.copy(STOCK_DIR).multiplyScalar(3.3).add(new THREE.Vector3(0, 1.0, 0));
+    cam.lookAt(0, 1.0, 0);
   }
   renderer.render(scene, cam);
   const url = renderer.domElement.toDataURL('image/png');

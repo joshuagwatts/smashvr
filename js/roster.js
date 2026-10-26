@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=47';
-import { loadVRMFile } from './vrm.js?v=47';
+import { FIGHTER_DEFS } from './moves.js?v=48';
+import { loadVRMFile } from './vrm.js?v=48';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -141,7 +141,7 @@ async function detectRecordFacing(data) {
   }
   if (data.vrm) {
     try {
-      const { detectFacingVRM } = await import('./facing.js?v=47');
+      const { detectFacingVRM } = await import('./facing.js?v=48');
       const det = detectFacingVRM(data.vrm);
       return { faceYaw: det.yaw || 0, faceDeg: det.deg || 0 };
     } catch (e) { /* detection best-effort */ }
@@ -161,7 +161,7 @@ export async function importCharacter(file) {
   let archetype = null, style = null;
   if (!data.autorig && data.vrm) {
     try {
-      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=47');
+      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=48');
       archetype = analyzeVRM(data.vrm);
       style = assignStyle(archetype);
     } catch (e) { /* analysis failed — default style */ }
@@ -250,7 +250,9 @@ export async function setCustomFlip(defId, flip) {
 // only portraitV >= PORTRAIT_CACHE_V is trusted.
 // v0.43: v3 — v2 portraits of VRM0 imports were rendered facing backwards
 // (the baseYaw bug), so all older caches are distrusted and re-rendered.
-export const PORTRAIT_CACHE_V = 3;
+// v0.47: v4 — portraits re-framed front three-quarter (v3 and older are
+// side-profile renders), so all older caches re-render again.
+export const PORTRAIT_CACHE_V = 4;
 export async function setCustomPortrait(defId, dataUrl) {
   const entry = registry.get(defId);
   if (!entry) return;
@@ -276,7 +278,7 @@ export async function setCustomStyle(defId, styleName) {
     registerDef(entry);
   } else if (entry.archetype) {
     // Revert to auto-detected.
-    const { assignStyle } = await import('./archetype.js?v=47');
+    const { assignStyle } = await import('./archetype.js?v=48');
     entry.style = assignStyle(entry.archetype);
     entry.kit = entry.style.kit;
     registerDef(entry);
