@@ -10,8 +10,8 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=46';
-import { loadVRMFile } from './vrm.js?v=46';
+import { FIGHTER_DEFS } from './moves.js?v=47';
+import { loadVRMFile } from './vrm.js?v=47';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -97,7 +97,18 @@ function registerDef(rec) {
 export async function initRoster() {
   db = await openDB();
   const all = await idbAll();
-  for (const rec of all) registerDef(rec);
+  for (const rec of all) {
+    // v0.47: the "valkyrie" style was wiped (Joshua's order). Any record
+    // saved with it — auto-assigned or picked as a Lab override — falls
+    // back to the plain RONIN kit / no style. Other styles untouched.
+    if ((rec.style && rec.style.style === 'valkyrie') || rec.styleOverride === 'valkyrie') {
+      rec.style = null;
+      rec.kit = 'ronin';
+      if (rec.styleOverride === 'valkyrie') rec.styleOverride = 'auto';
+      idbPut(rec).catch(() => {});
+    }
+    registerDef(rec);
+  }
   return all.length;
 }
 
@@ -130,7 +141,7 @@ async function detectRecordFacing(data) {
   }
   if (data.vrm) {
     try {
-      const { detectFacingVRM } = await import('./facing.js?v=46');
+      const { detectFacingVRM } = await import('./facing.js?v=47');
       const det = detectFacingVRM(data.vrm);
       return { faceYaw: det.yaw || 0, faceDeg: det.deg || 0 };
     } catch (e) { /* detection best-effort */ }
@@ -150,7 +161,7 @@ export async function importCharacter(file) {
   let archetype = null, style = null;
   if (!data.autorig && data.vrm) {
     try {
-      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=46');
+      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=47');
       archetype = analyzeVRM(data.vrm);
       style = assignStyle(archetype);
     } catch (e) { /* analysis failed — default style */ }
@@ -256,7 +267,6 @@ export async function setCustomStyle(defId, styleName) {
   // Apply the style's kit immediately.
   const styles = {
     brawler: { kit: 'ronin', style: 'brawler', headbutts: false, squashMul: 1.0, label: 'Brawler' },
-    valkyrie: { kit: 'volt', style: 'valkyrie', headbutts: false, squashMul: 1.0, label: 'Valkyrie' },
     silly: { kit: 'wisp', style: 'silly', headbutts: true, squashMul: 1.6, label: 'Silly' },
     bruiser: { kit: 'ronin', style: 'brawler', headbutts: true, squashMul: 1.2, label: 'Big-head bruiser' },
   };
@@ -266,7 +276,7 @@ export async function setCustomStyle(defId, styleName) {
     registerDef(entry);
   } else if (entry.archetype) {
     // Revert to auto-detected.
-    const { assignStyle } = await import('./archetype.js?v=46');
+    const { assignStyle } = await import('./archetype.js?v=47');
     entry.style = assignStyle(entry.archetype);
     entry.kit = entry.style.kit;
     registerDef(entry);

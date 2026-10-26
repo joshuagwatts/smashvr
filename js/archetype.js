@@ -1,9 +1,11 @@
 // js/archetype.js — v0.19: automatic character archetype detection for VRM imports.
 // Measures the model's proportions and assigns a fighting style:
 //   - big head -> headbutt-focused moves
-//   - feminine build -> "valkyrie" style (fast, kick-focused)
 //   - masculine fighter build -> "brawler" style (ronin kit, punch-focused)
 //   - cartoony (big head + short) -> "silly" style (bouncy, exaggerated)
+//   - everything else -> "brawler" (plain ronin kit)
+// (v0.47: the femme "valkyrie" kick style was wiped on Joshua's order —
+//  femme builds now fall through to the plain brawler like everyone else.)
 
 import * as THREE from 'three';
 
@@ -139,10 +141,6 @@ export function assignStyle(a) {
   if (a.bigHead) {
     return { kit: 'ronin', style: 'brawler', headbutts: true, squashMul: 1.2,
              label: 'Big-head bruiser' };
-  }
-  if (a.build === 'femme') {
-    return { kit: 'volt', style: 'valkyrie', headbutts: false, squashMul: 1.0,
-             label: 'Valkyrie' };
   }
   if (a.build === 'masc') {
     return { kit: 'ronin', style: 'brawler', headbutts: false, squashMul: 1.0,

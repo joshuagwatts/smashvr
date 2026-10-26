@@ -11,13 +11,13 @@
 // 'smashvr-kit' / 'smashvr-theme' ({defId, ...}) so the engine can live-update.
 
 import * as THREE from 'three';
-import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=46';
-import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=46';
-import { createFighter } from './fighters.js?v=46';
-import { tickFighterVisual, setFighterTheme } from './anim.js?v=46';
-import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=46';
-import { attachVRMToFighter } from './vrm.js?v=46';
-import { invalidatePortrait } from './portrait.js?v=46';
+import { FIGHTER_DEFS, MOVES, SLOTS, SLOT_LABELS } from './moves.js?v=47';
+import { classTax, classBudget, moveCap, validateKit, taxedCost } from './budget.js?v=47';
+import { createFighter } from './fighters.js?v=47';
+import { tickFighterVisual, setFighterTheme } from './anim.js?v=47';
+import { renameCustom, setCustomKit, deleteCustom, getCustomEntry, setCustomFlip, isCustom, getCharacterData, setCustomStyle } from './roster.js?v=47';
+import { attachVRMToFighter } from './vrm.js?v=47';
+import { invalidatePortrait } from './portrait.js?v=47';
 
 const OTHER = { ronin: 'volt', volt: 'ronin', wisp: 'ronin' };
 // v0.7: customs steal from their kit's rival (their native kit is the kit def's)
@@ -281,7 +281,7 @@ export function openLab(containerEl, onClose) {
     background: '#ffb34733', color: '#ffcf8a', border: '1px solid #ffb347' });
   const styleSel = document.createElement('select');
   css(styleSel, { padding: '5px 8px', borderRadius: '6px', background: '#232838', color: '#e8ecf4', border: '1px solid #3a4157', fontSize: '12px' });
-  for (const [v, label] of [['auto', 'Auto'], ['brawler', 'Brawler'], ['valkyrie', 'Valkyrie'], ['silly', 'Silly'], ['bruiser', 'Bruiser']]) {
+  for (const [v, label] of [['auto', 'Auto'], ['brawler', 'Brawler'], ['silly', 'Silly'], ['bruiser', 'Bruiser']]) {
     const o = document.createElement('option');
     o.value = v; o.textContent = label;
     styleSel.appendChild(o);
