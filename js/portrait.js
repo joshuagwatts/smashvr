@@ -9,11 +9,11 @@ import * as THREE from 'three';
 // roster/moves — its registry is empty, isCustom() returns false for every
 // import, and custom portraits silently render the bare procedural rig in
 // the grey placeholder theme instead of the imported VRM.
-import { FIGHTER_DEFS } from './moves.js?v=48';
-import { createFighter } from './fighters.js?v=48';
-import { tickFighterVisual } from './anim.js?v=48';
-import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=48';
-import { attachVRMToFighter } from './vrm.js?v=48';
+import { FIGHTER_DEFS } from './moves.js?v=49';
+import { createFighter } from './fighters.js?v=49';
+import { tickFighterVisual } from './anim.js?v=49';
+import { isCustom, getCharacterData, getCustomEntry, setCustomPortrait, PORTRAIT_CACHE_V } from './roster.js?v=49';
+import { attachVRMToFighter } from './vrm.js?v=49';
 
 const SIZE = 220;
 let renderer = null;
@@ -57,8 +57,25 @@ const FRONT_DIR = new THREE.Vector3(2.4, -0.35, 1.7).normalize();
 // so their front three-quarter is the FRONT_DIR above.
 const STOCK_DIR = new THREE.Vector3(1.55, -0.35, 2.85).normalize();
 
-// Pose the fighter in a dynamic "select stance" — a mid-jab for punchers.
-function poseForPortrait(f) {
+// Pose the fighter for its card. Stock fighters keep their dynamic
+// mid-jab "select stance". Customs (v0.49, Joshua: "make sure it's like
+// that for the thumbnails too") stand in Ronin's idle guard stance —
+// the same pose template the forced-Ronin-rest path puts on them
+// in-match, not a bind pose or a model-authored pose.
+function poseForPortrait(f, custom) {
+  if (custom) {
+    f.state = 'idle';
+    f.moveId = null;
+    f.stateFrame = 0;
+    f._animT = 1.0;
+    f.facing = 1;
+    // The locomotion path crossfades from the creation pose (blend rate
+    // dt*7) — a single render tick would leave the card at ~zero pose.
+    // Run the blend out (and let spring bones settle) before framing.
+    for (let i = 0; i < 6; i++) tickFighterVisual(f, 0.05);
+    f.root.updateMatrixWorld(true);
+    return;
+  }
   f.state = 'attack';
   f.moveId = 'jab';
   // Frame ~40% through the jab: arm extended, torso twisted — reads as action.
@@ -110,7 +127,7 @@ async function renderPortrait(defId) {
       return null; // VRM failed — caller shows the swatch fallback
     }
   }
-  poseForPortrait(f);
+  poseForPortrait(f, isCustom(defId));
   scene.add(f.root);
   if (isCustom(defId)) {
     // v0.28: frame the actual model. Built-ins share one fixed camera, but

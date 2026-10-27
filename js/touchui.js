@@ -22,7 +22,7 @@
 // The engine's input contract is digital (keyboard is digital too), so the
 // stick quantizes its analog vector to direction booleans with a deadzone
 // and hysteresis — the vector itself stays analog (nub tracking, magnitude).
-import { Input } from './input.js?v=48';
+import { Input } from './input.js?v=49';
 
 export const STICK_DEADZONE = 0.18;
 const DIR_ON = 0.38;   // axis magnitude that turns a direction on

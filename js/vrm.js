@@ -12,7 +12,7 @@ export async function loadVRMFile(file) {
   if (ext === 'glb' || ext === 'gltf') {
     // Auto-rig path: static character -> fitted humanoid skeleton.
     // Dynamic import keeps the rigger out of the boot bundle.
-    const { autoRigCharacterFile } = await import('./autorig.js?v=48');
+    const { autoRigCharacterFile } = await import('./autorig.js?v=49');
     return autoRigCharacterFile(file);
   }
   const loader = new GLTFLoader();
@@ -64,7 +64,7 @@ export function attachVRMToFighter(f, { vrm, vrm0, flip, faceYaw, baseYaw }) {
   f._isVRM = true; // procedural theme recolors must never touch a VRM model
   // v0.6.1: drop any cached rest-pose quaternions — a new model has new rests
   f._vrmRest = null;
-  f._armYaw = null; // v0.47: arm-plane correction is per-model too
+  f._restLDir = null; // v0.49: rest-frame transplant capture is per-model too
 }
 
 export function removeVRMFromFighter(f) {
@@ -88,6 +88,6 @@ export function removeVRMFromFighter(f) {
   }
   f._isVRM = false;
   f._vrmRest = null; // v0.6.1: rest cache belongs to the removed model
-  f._armYaw = null; // v0.47: arm-plane cache likewise
+  f._restLDir = null; // v0.49: rest-frame transplant capture likewise
   if (f.rig && f.rig.group) f.rig.group.visible = true;
 }

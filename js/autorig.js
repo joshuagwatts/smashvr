@@ -21,8 +21,8 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=48';
-import { detectFacingScene } from './facing.js?v=48';
+import { BONE_NAMES, VRM_BONE_MAP } from './rig.js?v=49';
+import { detectFacingScene } from './facing.js?v=49';
 
 // game bone -> VRM humanoid name, inverted for the adapter below
 const BONE_OF_VRM_NAME = {};

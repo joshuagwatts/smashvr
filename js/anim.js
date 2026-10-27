@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP, buildProceduralRig } from './rig.js?v=48';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=48';
+import { BONE_NAMES, VRM_BONE_MAP, buildProceduralRig } from './rig.js?v=49';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=49';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -32,9 +32,11 @@ const LEG_CHAINS = [
 ];
 const SPINE_CHAIN = ['hips', 'spine', 'chest', 'neck', 'head'];
 const NORM_CHAINS = [...ARM_CHAINS, ...LEG_CHAINS, SPINE_CHAIN];
-// v0.47: VRM shoulder (clavicle) bone per arm — the arm-plane yaw pivots.
-const VRM_SHOULDER = { L: 'leftShoulder', R: 'rightShoulder' };
-const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+// v0.49: bone -> next-in-chain map for the rest-frame transplant.
+const CHAIN_CHILD = {};
+for (const chain of NORM_CHAINS) {
+  for (let i = 0; i + 1 < chain.length; i++) CHAIN_CHILD[chain[i]] = chain[i + 1];
+}
 // v0.12: frame-correct VRM retargeting scratch.
 const _parentW = new THREE.Quaternion();
 const _plink = [];
@@ -451,6 +453,7 @@ function poseRigLocals(rigBones, eulerDict, mirrorYaw) {
 
 // Capture a rig's rest (all-identity locals) chain quats + arm chain dirs,
 // in fighter space. Rig locals are restored exactly as found.
+const _rq = new THREE.Quaternion();
 function restChain(rigBones, stop) {
   const saved = {};
   for (const b of BONE_NAMES) {
@@ -458,7 +461,7 @@ function restChain(rigBones, stop) {
     saved[b] = rigBones[b].quaternion.clone();
     rigBones[b].quaternion.identity();
   }
-  const cache = { quat: {}, dir: {} };
+  const cache = { quat: {}, dir: {}, ldir: {} };
   for (const b of BONE_NAMES) {
     if (!rigBones[b]) continue;
     cache.quat[b] = chainQuat(rigBones[b], stop, new THREE.Quaternion());
@@ -472,6 +475,18 @@ function restChain(rigBones, stop) {
       chainPos(rigBones[bone], stop, _v1);
       chainPos(rigBones[child], stop, _v2);
       cache.dir[bone] = _v2.sub(_v1).normalize().clone();
+    }
+  }
+  // v0.49: the same segment direction expressed in the bone's OWN rest
+  // frame (chain quat inverse applied) — the rig's bone-local convention,
+  // which the VRM rest-frame transplant (below) aligns each model's
+  // bone-local offset direction onto.
+  for (const chain of NORM_CHAINS) {
+    for (let i = 0; i + 1 < chain.length; i++) {
+      const bone = chain[i];
+      if (!cache.dir[bone] || !cache.quat[bone]) continue;
+      cache.ldir[bone] = cache.dir[bone].clone()
+        .applyQuaternion(_rq.copy(cache.quat[bone]).invert());
     }
   }
   for (const b of BONE_NAMES) {
@@ -507,74 +522,68 @@ export function applyPose(f, eulerDict) {
     f._procRestW = restChain(f.rig.bones, f.rig.group.parent);
     return f._procRestW;
   }
-  // v0.15: rotate a VRM bone so its rest direction (bone -> child) matches
-  // the procedural's. Pure swing (shortest arc), preserves twist.
-  // (v0.46: composed in fighter space — see the note above. v0.47: used for
-  // every normalized chain — arms, legs, spine — not just arms.)
-  function normalizeVrmBone(humanoid, bone, child, procDir, stopV) {
-    const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[bone]);
-    const vc = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[child]);
-    if (!vb || !vc || !procDir) return;
-    chainPos(vb, stopV, _v1);
-    chainPos(vc, stopV, _v2);
-    _v3.copy(_v2).sub(_v1);
-    if (_v3.lengthSq() < 1e-10) return;
-    _v3.normalize();
-    _m1.setFromUnitVectors(_v3, procDir); // swing only
-    if (Math.abs(_m1.w - 1) < 1e-6) return; // already aligned
-    chainQuat(vb.parent, stopV, _q2); // P (fighter space)
-    _q1.copy(vb.quaternion); // save L_old (must not clobber before use)
-    // L_new = P^-1 * M * P * L_old
-    vb.quaternion.copy(_q2).invert().multiply(_m1).multiply(_q2).multiply(_q1);
-  }
-  // v0.47 (Div #3): arm-plane correction. A real model's arms hang at its
-  // sides — in fighter space the wrist rest offset sits at z=±half the
-  // shoulder width, in a plane parallel to (and offset from) the profile
-  // plane the flat rig poses in, so guards/pumps/glides read as dangling
-  // beside the body instead of playing in profile. Yaw each arm assembly
-  // about the fighter-space Y axis (through the VRM shoulder/clavicle
-  // bone, the arm chain's parent) until the wrist's rest offset from the
-  // body axis lies along the facing axis — the rig's staggered profile
-  // arrangement (R arm forward, L arm back, both at z≈0). The yaw is
-  // measured ONCE per model from its swing-normalized rest and cached on
-  // the fighter (attach drops the cache with the model): a rest-frame
-  // correction — the delta transfer below composes on top unchanged, and
-  // being defined pre-mirror in fighter space it is facing-symmetric.
-  function measureArmYaw(humanoid, stopV) {
-    const out = { L: 0, R: 0 };
-    const hipsB = humanoid.getNormalizedBoneNode(VRM_BONE_MAP.hips);
-    if (!hipsB) return out;
-    chainPos(hipsB, stopV, _v3);
-    for (const s of ['L', 'R']) {
-      const handB = humanoid.getNormalizedBoneNode(VRM_BONE_MAP['hand' + s]);
-      if (!handB) continue;
-      chainPos(handB, stopV, _v1);
-      const dx = _v1.x - _v3.x, dz = _v1.z - _v3.z;
-      if (Math.hypot(dx, dz) < 1e-4) continue;
-      const target = s === 'R' ? 0 : Math.PI;
-      // Fighter-space R_y(yaw) moves a point's azimuth φ to φ − yaw, so
-      // the yaw that lands the wrist on the target azimuth is cur − target.
-      let yaw = Math.atan2(dz, dx) - target;
-      while (yaw > Math.PI) yaw -= 2 * Math.PI;
-      while (yaw < -Math.PI) yaw += 2 * Math.PI;
-      out[s] = yaw;
+  // v0.49: RONIN REST-FRAME TRANSPLANT — supersedes the v0.15 swing
+  // normalization and the v0.47 rest flattening + arm-plane yaw. Joshua's
+  // interim call: imports stop preserving their own rest character and
+  // adopt Ronin's posing as the template, uniformly.
+  //
+  // The normalized rig's rest locals are identity for every model; all of
+  // a model's rest character lives in its bone OFFSET directions (arms
+  // extend along bone-local ±X, the rig's along −Y, knees wherever the
+  // author bent them). So for each chained bone, the transplant sets the
+  // bone's fighter-space rest frame to
+  //     F = (rig rest chain frame) · C,
+  //     C = shortest arc taking the model's bone-local child-offset
+  //         direction onto the rig's bone-local child-offset direction.
+  // F then maps the model's segment exactly onto the rig's rest segment
+  // direction (the joint layout becomes Ronin's, scaled only by the
+  // model's own bone lengths), and the delta transfer below yields posed
+  // segment directions identical to Ronin's in every state — the posed
+  // chain frame is Ronin's posed frame · C, a constant bone-space roll
+  // (the axis-convention difference itself, which no rotation at the
+  // joint can remove without moving the segment). Endpoint bones
+  // (head/hands/feet) have no segment in the map: they keep their
+  // authored local under the transplanted parent frame, so facing and
+  // toe/palm orientation ride the corrected skeleton.
+  const _cq = new THREE.Quaternion(); // per-bone convention correction C
+  const _tq = new THREE.Quaternion(); // target rest frame F
+  // The model's bone-local child-offset directions, captured once per
+  // model from the reset pose (bind data — constant). MUST be called
+  // while the humanoid is at resetNormalizedPose (applyPose guarantees).
+  function modelLocalDir(f, humanoid, stopV) {
+    if (f._restLDir) return f._restLDir;
+    const out = {};
+    for (const chain of NORM_CHAINS) {
+      for (let i = 0; i + 1 < chain.length; i++) {
+        const bone = chain[i], child = chain[i + 1];
+        const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[bone]);
+        const vc = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[child]);
+        if (!vb || !vc) continue;
+        chainPos(vb, stopV, _v1);
+        chainPos(vc, stopV, _v2);
+        _v2.sub(_v1);
+        if (_v2.lengthSq() < 1e-10) continue;
+        _v2.normalize();
+        chainQuat(vb, stopV, _q1);
+        out[bone] = _v2.applyQuaternion(_q1.invert()).clone();
+      }
     }
+    f._restLDir = out;
     return out;
   }
-  function yawVrmBone(humanoid, vrmBoneName, yaw, stopV) {
-    if (!yaw) return;
-    const vb = humanoid.getNormalizedBoneNode(vrmBoneName);
-    if (!vb) return; // model has no clavicle bone — correction unavailable
-    _m1.setFromAxisAngle(_Y_AXIS, yaw); // M (fighter space)
-    chainQuat(vb.parent, stopV, _q2); // P (fighter space)
-    _q1.copy(vb.quaternion); // save L_old
-    // L_new = P^-1 * M * P * L_old
-    vb.quaternion.copy(_q2).invert().multiply(_m1).multiply(_q2).multiply(_q1);
-  }
-  function applyArmPlane(f, humanoid, stopV) {
-    if (!f._armYaw) f._armYaw = measureArmYaw(humanoid, stopV);
-    yawVrmBone(humanoid, VRM_SHOULDER.L, f._armYaw.L, stopV);
-    yawVrmBone(humanoid, VRM_SHOULDER.R, f._armYaw.R, stopV);
+  function forceRoninRestFrame(f, humanoid, refRest, stopV) {
+    const ldir = modelLocalDir(f, humanoid, stopV);
+    // BONE_NAMES is root-to-tip: each bone's parent chain is read live,
+    // so ancestors already hold their transplanted locals when solved.
+    for (const b of BONE_NAMES) {
+      const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+      if (!vb) continue;
+      if (!CHAIN_CHILD[b] || !ldir[b] || !refRest.ldir || !refRest.ldir[b] || !refRest.quat[b]) continue;
+      _cq.setFromUnitVectors(ldir[b], refRest.ldir[b]); // C_b
+      _tq.copy(refRest.quat[b]).multiply(_cq); // F_b
+      chainQuat(vb.parent, stopV, _q2); // live parent chain (fighter space)
+      vb.quaternion.copy(_q2.invert().multiply(_tq));
+    }
   }
   if (f.vrm && f.vrm.vrm && f.vrm.vrm.humanoid) {
     const humanoid = f.vrm.vrm.humanoid;
@@ -606,21 +615,13 @@ export function applyPose(f, eulerDict) {
     }
     // VRM rest in fighter space (after reset)
     humanoid.resetNormalizedPose();
-    // v0.15: normalize arm rest to the procedural's hanging arms, root-to-tip.
-    // Without this, T-pose/A-pose imports keep their arms out and never take
-    // the fighting stance — "more like Ronin" needs the same rest.
-    // v0.47: legs + spine get the same flattening (Div #2 — Mushy's authored
-    // +13.6° knee bend and lopsided stance, the models' spine curl), then
-    // the arm-plane yaw (Div #3) swings the arm assemblies into the profile
-    // plane. Root-to-tip across the whole skeleton: spine first (it parents
-    // everything), then legs, then arms; each swing re-reads live chain
-    // positions and targets an absolute rest direction, so order is safe.
-    for (const chain of [SPINE_CHAIN, ...LEG_CHAINS, ...ARM_CHAINS]) {
-      for (let i = 0; i + 1 < chain.length; i++) {
-        normalizeVrmBone(humanoid, chain[i], chain[i + 1], refRest.dir[chain[i]], stopV);
-      }
-    }
-    applyArmPlane(f, humanoid, stopV);
+    // v0.49: force the model's rest frame onto Ronin's (see
+    // forceRoninRestFrame above) BEFORE the rest capture, so the delta
+    // transfer starts from Ronin's rest template instead of the model's
+    // authored rest. v0.15–v0.47 swung segment directions toward the
+    // rig's and flattened/yawed pieces of the result; the transplant
+    // replaces all of it with one construction.
+    forceRoninRestFrame(f, humanoid, refRest, stopV);
     const vrmRest = {};
     for (const b of BONE_NAMES) {
       const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
