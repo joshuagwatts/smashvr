@@ -5,8 +5,8 @@
 // getNormalizedBoneNode quaternion (null-guarded), then vrm.update(dt).
 
 import * as THREE from 'three';
-import { BONE_NAMES, VRM_BONE_MAP, buildProceduralRig } from './rig.js?v=49';
-import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=49';
+import { BONE_NAMES, VRM_BONE_MAP, buildProceduralRig } from './rig.js?v=50';
+import { NEUTRAL_POSE, POSES, FLOATER_LIMB } from './moves.js?v=50';
 
 const _euler = new THREE.Euler();
 const _delta = new THREE.Quaternion();
@@ -525,34 +525,130 @@ export function applyPose(f, eulerDict) {
   // v0.49: RONIN REST-FRAME TRANSPLANT — supersedes the v0.15 swing
   // normalization and the v0.47 rest flattening + arm-plane yaw. Joshua's
   // interim call: imports stop preserving their own rest character and
-  // adopt Ronin's posing as the template, uniformly.
-  //
-  // The normalized rig's rest locals are identity for every model; all of
-  // a model's rest character lives in its bone OFFSET directions (arms
-  // extend along bone-local ±X, the rig's along −Y, knees wherever the
-  // author bent them). So for each chained bone, the transplant sets the
-  // bone's fighter-space rest frame to
-  //     F = (rig rest chain frame) · C,
-  //     C = shortest arc taking the model's bone-local child-offset
-  //         direction onto the rig's bone-local child-offset direction.
-  // F then maps the model's segment exactly onto the rig's rest segment
-  // direction (the joint layout becomes Ronin's, scaled only by the
-  // model's own bone lengths), and the delta transfer below yields posed
-  // segment directions identical to Ronin's in every state — the posed
-  // chain frame is Ronin's posed frame · C, a constant bone-space roll
-  // (the axis-convention difference itself, which no rotation at the
-  // joint can remove without moving the segment). Endpoint bones
-  // (head/hands/feet) have no segment in the map: they keep their
-  // authored local under the transplanted parent frame, so facing and
-  // toe/palm orientation ride the corrected skeleton.
-  const _cq = new THREE.Quaternion(); // per-bone convention correction C
+  // adopt Ronin's posing as the template, uniformly. For each chained
+  // bone the transplant re-aims the model's rest segment direction onto
+  // Ronin's (the joint layout becomes Ronin's, scaled only by the
+  // model's own bone lengths), and the delta transfer below yields
+  // posed segment directions identical to Ronin's in every state.
+  // Endpoint bones (head/hands/feet) have no segment in the map: they
+  // keep their authored local under the corrected parent frame, so
+  // facing and toe/palm orientation ride the corrected skeleton.
+  // v0.50: the correction is a fighter-space SWING on the model's OWN
+  // rest frame: F = A · modelRest, A = shortest arc from the model's
+  // fighter-space rest segment direction to Ronin's. v0.49 instead
+  // installed the rig's frame (F = rigChain · C, C from bone-local
+  // offset dirs): segment directions landed exact (0.00°) but each
+  // frame's TWIST became the rig's — and the rig's twist convention
+  // (bone frames face +Z while its body faces +X) differs from the
+  // models' by ±90° of yaw in opposite directions (VRM0 Mushy vs VRM1
+  // SeedSan), so the rendered bodies turned 90° off their facing:
+  // Mushy's face pointed at the stage's back wall, SeedSan's at the
+  // camera. The swing form keeps the parity identity the delta
+  // transfer rests on (F · bone-local dir == Ronin's rest segment
+  // direction) while the frame's own twist — where the face, palms
+  // and toes point — stays the model's own.
+  const _aq = new THREE.Quaternion(); // per-bone fighter-space swing A
   const _tq = new THREE.Quaternion(); // target rest frame F
-  // The model's bone-local child-offset directions, captured once per
-  // model from the reset pose (bind data — constant). MUST be called
-  // while the humanoid is at resetNormalizedPose (applyPose guarantees).
-  function modelLocalDir(f, humanoid, stopV) {
-    if (f._restLDir) return f._restLDir;
-    const out = {};
+  // v0.50 (arm clearance): the transplant hands every import Ronin's arm
+  // DIRECTIONS, but the arm JOINTS stay the model's — and a model's mesh
+  // can be wider than its skeleton. SeedSan: shoulder plane 0.141 from
+  // the spine axis, torso silhouette flares to 0.172 at lower-chest
+  // height (mesh-sampled) — his upper arms hang INSIDE the coat ("arms
+  // go like in his body"). Ronin's shoulder plane (0.25) sits 0.025
+  // OUTSIDE his torso surface (0.225) — that's the clearance the pose
+  // was authored against. So for arm chains only, the rest target
+  // direction gets an outward tilt about the facing axis, sized per
+  // model from its own bind geometry: enough that the elbow regains
+  // Ronin's +0.025 centerline margin past the model's widest torso
+  // band. The gate is penetration: if the model's shoulder plane is
+  // already outside its torso silhouette (Mushy: 0.168 vs 0.155), phi
+  // stays 0 and the model is bit-identical to the un-biased transplant.
+  // Legs/spine keep the exact v0.49 direction equality.
+  const ARM_BIAS_BONES = { upperArmL: 'L', lowerArmL: 'L', upperArmR: 'R', lowerArmR: 'R' };
+  const RIG_SHOULDER_MARGIN = 0.025; // Ronin: 0.25 shoulder plane - 0.225 torso surface
+  const ARM_BIAS_MAX = 15 * Math.PI / 180;
+  const _bq = new THREE.Quaternion(); // arm-bias rotation
+  const _tv = new THREE.Vector3(); // biased target direction
+  const _X_AXIS = new THREE.Vector3(1, 0, 0);
+  // One-time per model (cached on f._armBias, dropped with the model in
+  // vrm.js). mPos = normalized-bone rest positions in fighter space,
+  // captured by forceRoninRestFrame at resetNormalizedPose.
+  function armBiasFor(f, humanoid, stopV, mPos) {
+    if (f._armBias) return f._armBias;
+    const bias = { phi: 0, sign: { L: 0, R: 0 } };
+    f._armBias = bias; // any failure below leaves phi 0 (un-biased)
+    if (!mPos.spine || !mPos.neck || !mPos.chest || !mPos.upperArmL || !mPos.upperArmR ||
+        !mPos.lowerArmL || !mPos.lowerArmR) return bias;
+    const spineP = mPos.spine, neckP = mPos.neck, chestP = mPos.chest;
+    const axis = new THREE.Vector3().subVectors(neckP, spineP);
+    const torsoLen = axis.length();
+    if (torsoLen < 1e-6) return bias;
+    axis.divideScalar(torsoLen);
+    const latAxis = new THREE.Vector3().subVectors(mPos.upperArmL, mPos.upperArmR);
+    if (latAxis.lengthSq() < 1e-10) latAxis.set(0, 0, 1); else latAxis.normalize();
+    let shLat = 0, upperLen = 0;
+    for (const side of ['L', 'R']) {
+      const sh = mPos['upperArm' + side];
+      shLat += Math.abs(new THREE.Vector3().subVectors(sh, chestP).dot(latAxis));
+      upperLen += mPos['lowerArm' + side].distanceTo(sh);
+      bias.sign[side] = Math.sign(new THREE.Vector3().subVectors(sh, chestP).z);
+    }
+    shLat /= 2; upperLen /= 2;
+    if (upperLen < 1e-6) return bias;
+    // Torso silhouette: bind-pose skinned verts whose dominant bone is
+    // spine/chest, lateral extent along the shoulder axis, banded to the
+    // spine->neck span. Sampled in stopV (fighter) space — geometry
+    // positions are bind shape regardless of the current pose; only the
+    // node transforms are composed, into stopV space via its inverse.
+    const scene = f.vrm && f.vrm.vrm ? f.vrm.vrm.scene : null;
+    if (!scene || typeof humanoid.getBoneNode !== 'function') return bias;
+    const lats = [];
+    try {
+      scene.updateWorldMatrix(true, true);
+      const invStop = stopV ? new THREE.Matrix4().copy(stopV.matrixWorld).invert() : new THREE.Matrix4();
+      const node2key = new Map();
+      for (const k of BONE_NAMES) {
+        const n = humanoid.getBoneNode(VRM_BONE_MAP[k]);
+        if (n) node2key.set(n, k);
+      }
+      const vp = new THREE.Vector3(), rel = new THREE.Vector3();
+      scene.traverse((o) => {
+        if (!o.isSkinnedMesh || !o.skeleton) return;
+        const geo = o.geometry, pos = geo.getAttribute('position');
+        const skI = geo.getAttribute('skinIndex'), skW = geo.getAttribute('skinWeight');
+        if (!pos || !skI || !skW) return;
+        const mtx = new THREE.Matrix4().multiplyMatrices(invStop, o.matrixWorld);
+        for (let vi = 0; vi < pos.count; vi++) {
+          let bi = 0, bw = -1;
+          for (let k = 0; k < 4; k++) { const w = skW.getComponent(vi, k); if (w > bw) { bw = w; bi = skI.getComponent(vi, k); } }
+          const key = node2key.get(o.skeleton.bones[bi]);
+          if (key !== 'spine' && key !== 'chest') continue;
+          vp.fromBufferAttribute(pos, vi).applyMatrix4(mtx);
+          rel.subVectors(vp, spineP);
+          const u = rel.dot(axis) / torsoLen;
+          if (u < -0.05 || u > 1.10) continue;
+          lats.push(Math.abs(rel.dot(latAxis)));
+        }
+      });
+    } catch (e) { return bias; } // exotic scene shape: stay un-biased
+    if (lats.length < 30) return bias;
+    lats.sort((a, b) => a - b);
+    const torsoLat = lats[Math.min(lats.length - 1, Math.floor(0.99 * lats.length))];
+    if (shLat >= torsoLat) return bias; // shoulder already outside the silhouette
+    const deficit = torsoLat + RIG_SHOULDER_MARGIN - shLat;
+    bias.phi = Math.min(ARM_BIAS_MAX, Math.asin(Math.min(1, deficit / upperLen)));
+    return bias;
+  }
+  function forceRoninRestFrame(f, humanoid, refRest, stopV) {
+    // Model rest capture (fighter space) — MUST run while the humanoid
+    // is at resetNormalizedPose and BEFORE any bone is rewritten.
+    const mQuat = {}, mDir = {}, mPos = {};
+    for (const b of BONE_NAMES) {
+      const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
+      if (!vb) continue;
+      mQuat[b] = chainQuat(vb, stopV, new THREE.Quaternion());
+      mPos[b] = chainPos(vb, stopV, new THREE.Vector3());
+    }
     for (const chain of NORM_CHAINS) {
       for (let i = 0; i + 1 < chain.length; i++) {
         const bone = chain[i], child = chain[i + 1];
@@ -563,24 +659,24 @@ export function applyPose(f, eulerDict) {
         chainPos(vc, stopV, _v2);
         _v2.sub(_v1);
         if (_v2.lengthSq() < 1e-10) continue;
-        _v2.normalize();
-        chainQuat(vb, stopV, _q1);
-        out[bone] = _v2.applyQuaternion(_q1.invert()).clone();
+        mDir[bone] = _v2.normalize().clone();
       }
     }
-    f._restLDir = out;
-    return out;
-  }
-  function forceRoninRestFrame(f, humanoid, refRest, stopV) {
-    const ldir = modelLocalDir(f, humanoid, stopV);
+    const bias = armBiasFor(f, humanoid, stopV, mPos);
     // BONE_NAMES is root-to-tip: each bone's parent chain is read live,
     // so ancestors already hold their transplanted locals when solved.
     for (const b of BONE_NAMES) {
       const vb = humanoid.getNormalizedBoneNode(VRM_BONE_MAP[b]);
       if (!vb) continue;
-      if (!CHAIN_CHILD[b] || !ldir[b] || !refRest.ldir || !refRest.ldir[b] || !refRest.quat[b]) continue;
-      _cq.setFromUnitVectors(ldir[b], refRest.ldir[b]); // C_b
-      _tq.copy(refRest.quat[b]).multiply(_cq); // F_b
+      if (!CHAIN_CHILD[b] || !mDir[b] || !mQuat[b] || !refRest.dir || !refRest.dir[b] || !refRest.quat[b]) continue;
+      let target = refRest.dir[b];
+      const bSide = ARM_BIAS_BONES[b];
+      if (bSide && bias.phi > 0 && bias.sign[bSide] !== 0) {
+        _bq.setFromAxisAngle(_X_AXIS, -bias.sign[bSide] * bias.phi);
+        target = _tv.copy(target).applyQuaternion(_bq);
+      }
+      _aq.setFromUnitVectors(mDir[b], target); // A_b
+      _tq.copy(_aq).multiply(mQuat[b]); // F_b = A_b · model rest frame
       chainQuat(vb.parent, stopV, _q2); // live parent chain (fighter space)
       vb.quaternion.copy(_q2.invert().multiply(_tq));
     }

@@ -6,8 +6,8 @@ import { loadEngine, blankScene } from './_harness.mjs';
 
 const { THREE, createGame } = await loadEngine();
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-// same module instance as the engine's (identical ?v=49 URL) — shares state
-const { peekProjectiles } = await import(pathToFileURL(path.join(ROOT, 'js/fx.js')).href + '?v=49');
+// same module instance as the engine's (identical ?v=50 URL) — shares state
+const { peekProjectiles } = await import(pathToFileURL(path.join(ROOT, 'js/fx.js')).href + '?v=50');
 
 const scene = blankScene(THREE);
 const blank = () => ({ left: false, right: false, up: false, down: false, attack: false, smash: false, special: false, jump: false, shield: false });
