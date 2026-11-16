@@ -20,6 +20,10 @@ export const VRM_BONE_MAP = {
   upperArmR: 'rightUpperArm', lowerArmR: 'rightLowerArm', handR: 'rightHand',
   upperLegL: 'leftUpperLeg', lowerLegL: 'leftLowerLeg', footL: 'leftFoot',
   upperLegR: 'rightUpperLeg', lowerLegR: 'rightLowerLeg', footR: 'rightFoot',
+  // v0.51: SABER's blade tip. Procedural saber rigs carry a real saberTip
+  // bone at the blade's end; on a VRM the tip resolves to the hand itself
+  // (the tipper hitbox then sits on the fist — close enough).
+  saberTip: 'rightHand',
 };
 
 function capsule(r, len, mat) {
@@ -46,7 +50,9 @@ export function buildProceduralRig(theme, variant) {
   // NO legs (floater rig: leg bones are simply absent; anim.js null-guards).
   if (variant === 'wisp') return buildWispRig(theme, suitMat, accentMat, darkMat);
 
-  const bulky = variant === 'ronin';
+  // v0.51: TITAN shares RONIN's bulky frame; SABER is a lean frame with a
+  // blade parented to the right hand (below).
+  const bulky = variant === 'ronin' || variant === 'titan';
   const group = new THREE.Group();
   const bones = {};
   const at = (name, parent, x, y, z) => {
@@ -100,7 +106,12 @@ export function buildProceduralRig(theme, variant) {
   const skull = new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 16), suitMat);
   skull.position.y = 0.06;
   head.add(skull);
-  if (bulky) {
+  if (variant === 'titan') {
+    // v0.51: TITAN iron brow band (dark, no knot — not a ronin cosplay)
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.28), darkMat);
+    band.position.y = 0.10;
+    head.add(band);
+  } else if (bulky) {
     // RONIN headband
     const band = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.055, 0.28), accentMat);
     band.position.y = 0.10;
@@ -119,7 +130,7 @@ export function buildProceduralRig(theme, variant) {
   for (const s of [-1, 1]) {
     const L = s < 0 ? 'L' : 'R';
     const shoulder = at('upperArm' + L, chest, s * (bulky ? 0.25 : 0.21), 0.18, 0);
-    if (!bulky) {
+    if (!bulky || variant === 'titan') {
       const pad = new THREE.Mesh(new THREE.SphereGeometry(0.095, 14, 10), accentMat);
       pad.position.y = 0.02;
       shoulder.add(pad);
@@ -132,6 +143,19 @@ export function buildProceduralRig(theme, variant) {
     const wrist = at('hand' + L, fore, 0, -0.26, 0);
     const glove = new THREE.Mesh(new THREE.SphereGeometry(0.062, 12, 10), accentMat);
     wrist.add(glove);
+    // v0.51: SABER — a blade parented to the right hand. It extends along
+    // the hand's -Y (the forearm axis continued), so strikes carry the
+    // sword visually and the saberTip bone at its end IS the tipper
+    // hitbox point (STRIKE_LIMB per-hit 'saberTip', see moves.js).
+    if (variant === 'saber' && L === 'R') {
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.20), darkMat);
+      guard.position.y = -0.07;
+      wrist.add(guard);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.55, 0.10), accentMat);
+      blade.position.y = -0.36;
+      wrist.add(blade);
+      at('saberTip', wrist, 0, -0.66, 0);
+    }
   }
 
   function setTheme(t) {

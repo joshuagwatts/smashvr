@@ -61,8 +61,8 @@ async function bootAndStart(p2def) {
   // v0.9: slot UI — select slot 2 via its name (the CTRL badge cycles
   // controller instead of selecting), then assign its fighter card
   if (p2def) {
-    await page.click('#slot-strip .slot:nth-child(2) .slot-name');
-    await page.click(`#fighter-cards .fcard[data-def="${p2def}"]`);
+    await page.click('#slot-strip .tray:nth-child(2) .slot-name');
+    await page.click(`#fighter-cards .tile[data-def="${p2def}"]`);
   }
   await page.click('#btn-start');
   await page.waitForFunction(() => window.__sv && window.__sv.game && window.__sv.game.state === 'fight', { timeout: 30000 });

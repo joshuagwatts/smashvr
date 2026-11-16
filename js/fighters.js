@@ -3,11 +3,11 @@
 // ('smashvr_theme_<defId>') from localStorage. Saved kit moves are rehydrated
 // to their canonical move records by id (falling back to the stored clone).
 
-import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=50';
+import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=51';
 // v0.23: re-exported so tests can register fake defs on the live instance.
 export { FIGHTER_DEFS };
-import { buildProceduralRig } from './rig.js?v=50';
-import { classBudget } from './budget.js?v=50';
+import { buildProceduralRig } from './rig.js?v=51';
+import { classBudget } from './budget.js?v=51';
 import * as THREE from 'three';
 
 function loadJSON(key) {
@@ -89,6 +89,11 @@ export function createFighter(defId) {
     jumpV: def.jumpV,
     djumpV: def.djumpV,
     traction: def.traction,
+    // v0.51: archetype mechanics fields (engine reads them with defaults,
+    // so defs that don't set them behave exactly as before).
+    jumps: def.jumps || 1,               // midair jumps (MIRAGE: 2)
+    grabRangeMul: def.grabRangeMul || 1, // TITAN: 1.3
+    throwMul: def.throwMul || 1,         // TITAN: 1.25
     moves,
     budget: classBudget(def.cls),
 
@@ -116,6 +121,7 @@ export function createFighter(defId) {
     moveFrame: 0,
     onGround: true,
     jumpsUsed: 0,
+    _blinkUsed: false, // v0.51: MIRAGE air-Blink spent flag
     shieldHP: 60,
     invuln: 0,
     hitPause: 0,

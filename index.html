@@ -57,13 +57,19 @@
   </div>
 </div>
 
-<!-- ============ FIGHTER SELECT ============ -->
+<!-- ============ FIGHTER SELECT (v0.51: classic fighter menu) ============ -->
 <div id="screen-select" class="screen hidden">
-  <div class="panel wide">
-    <h2 id="select-title">Choose your fighter</h2>
+  <div class="sel-wrap">
+    <div class="sel-head">
+      <h2 id="select-title">CHOOSE YOUR FIGHTER</h2>
+      <div class="sel-mode" id="select-mode">1P vs CPU</div>
+    </div>
+    <div class="sel-main">
+      <div class="sel-grid" id="fighter-cards"></div>
+      <aside class="sel-detail" id="sel-detail"></aside>
+    </div>
     <div id="slot-strip"></div>
-    <div class="sel-hint">Click a slot to select it · <b>CTRL</b> cycles controller · <b>●</b> cycles team · fighter cards assign to the selected slot</div>
-    <div class="cards" id="fighter-cards"></div>
+    <div class="sel-hint">Click a tray to select it · <b>CTRL</b> badge cycles controller · <b>●</b> cycles team · tiles assign to the selected tray · <b>←→↑↓</b> move cursor · <b>Enter</b> assigns · <b>Tab</b> next tray</div>
     <div class="btn-row">
       <button id="btn-back" class="btn ghost">&#8592; Back</button>
       <button id="btn-start" class="btn big">START FIGHT</button>
@@ -187,7 +193,7 @@
 
 <div id="toast" class="hidden"></div>
 
-<script src="./js/vendor/qrcode.js?v=50"></script>
-<script type="module" src="./js/main.js?v=50"></script>
+<script src="./js/vendor/qrcode.js?v=51"></script>
+<script type="module" src="./js/main.js?v=51"></script>
 </body>
 </html>

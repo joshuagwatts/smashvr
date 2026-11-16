@@ -13,7 +13,8 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const TOL = 0.25;
 // Sweep attacks: the striking point travels during active frames by design
 // (the hitbox follows the sweep). Verified at the strike tick.
-const SWEEP_IDS = new Set(['ronin_dsmash', 'blitz_dsmash', 'spectre_dsmash', 'wisp_bair', 'wisp_dtilt']);
+const SWEEP_IDS = new Set(['ronin_dsmash', 'blitz_dsmash', 'spectre_dsmash', 'wisp_bair', 'wisp_dtilt',
+  'saber_dsmash', 'mirage_dsmash']); // v0.51: the ronin-dsmash clones spin the same way
 
 const { buildProceduralRig } = await import(pathToFileURL(path.join(ROOT, 'js/rig.js')).href);
 const { MOVES, STRIKE_LIMB } = await import(pathToFileURL(path.join(ROOT, 'js/moves.js')).href);
@@ -36,7 +37,8 @@ for (const defId of Object.keys(MOVES)) {
       for (const mf of ticks) {
         samples++;
         poseStrikeSkeleton(f, attackPose(move, mf));
-        const tip = strikeTip(f, limb, h);
+        // v0.51: per-hit limb override (SABER tipper) — same rule as engine.
+        const tip = strikeTip(f, h.limb || limb, h);
         if (!tip) { fails++; failLines.push(`FAIL ${move.id} hit[${h.from}-${h.to}] tick ${mf}: null tip (limb=${limb})`); continue; }
         const d = Math.hypot(tip.x - h.dx, tip.y - h.dy);
         if (d > TOL) {

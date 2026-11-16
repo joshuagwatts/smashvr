@@ -10,8 +10,9 @@
 // reloads; the registry + select-screen cards rebuild on boot. Re-importing
 // the same filename updates the existing slot instead of duplicating.
 
-import { FIGHTER_DEFS } from './moves.js?v=50';
-import { loadVRMFile } from './vrm.js?v=50';
+import { FIGHTER_DEFS } from './moves.js?v=51';
+import { loadVRMFile } from './vrm.js?v=51';
+import { ARCHETYPES, CUSTOM_STYLE_ARCHETYPES, physicsOf } from './archetypes.js?v=51';
 
 const DB_NAME = 'smashvr';
 const STORE = 'customFighters';
@@ -87,6 +88,14 @@ function registerDef(rec) {
     style: rec.style || null,
     styleOverride: rec.styleOverride || 'auto',
   };
+  // v0.51: a Lab archetype override (Grappler/Duelist/Trickster) brings the
+  // archetype's PHYSICS with it — weight/speeds/fall/jumps come from the
+  // archetype profile, not from whatever kit def happens to be under it.
+  const archId = CUSTOM_STYLE_ARCHETYPES[def.styleOverride];
+  if (archId) {
+    const phys = physicsOf(ARCHETYPES[archId].defId);
+    if (phys) Object.assign(def, phys);
+  }
   delete def.altTheme;
   FIGHTER_DEFS[rec.id] = def;
   const entry = registry.get(rec.id) || {};
@@ -141,7 +150,7 @@ async function detectRecordFacing(data) {
   }
   if (data.vrm) {
     try {
-      const { detectFacingVRM } = await import('./facing.js?v=50');
+      const { detectFacingVRM } = await import('./facing.js?v=51');
       const det = detectFacingVRM(data.vrm);
       return { faceYaw: det.yaw || 0, faceDeg: det.deg || 0 };
     } catch (e) { /* detection best-effort */ }
@@ -161,7 +170,7 @@ export async function importCharacter(file) {
   let archetype = null, style = null;
   if (!data.autorig && data.vrm) {
     try {
-      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=50');
+      const { analyzeVRM, assignStyle } = await import('./archetype.js?v=51');
       archetype = analyzeVRM(data.vrm);
       style = assignStyle(archetype);
     } catch (e) { /* analysis failed — default style */ }
@@ -271,6 +280,11 @@ export async function setCustomStyle(defId, styleName) {
     brawler: { kit: 'ronin', style: 'brawler', headbutts: false, squashMul: 1.0, label: 'Brawler' },
     silly: { kit: 'wisp', style: 'silly', headbutts: true, squashMul: 1.6, label: 'Silly' },
     bruiser: { kit: 'ronin', style: 'brawler', headbutts: true, squashMul: 1.2, label: 'Big-head bruiser' },
+    // v0.51: the new base archetypes — kit AND physics profile (applied in
+    // registerDef via CUSTOM_STYLE_ARCHETYPES).
+    grappler: { kit: 'titan', style: 'grappler', headbutts: false, squashMul: 1.1, label: 'Grappler' },
+    duelist: { kit: 'saber', style: 'duelist', headbutts: false, squashMul: 1.0, label: 'Duelist' },
+    trickster: { kit: 'mirage', style: 'trickster', headbutts: false, squashMul: 1.15, label: 'Trickster' },
   };
   if (styleName !== 'auto' && styles[styleName]) {
     entry.style = styles[styleName];
@@ -278,7 +292,7 @@ export async function setCustomStyle(defId, styleName) {
     registerDef(entry);
   } else if (entry.archetype) {
     // Revert to auto-detected.
-    const { assignStyle } = await import('./archetype.js?v=50');
+    const { assignStyle } = await import('./archetype.js?v=51');
     entry.style = assignStyle(entry.archetype);
     entry.kit = entry.style.kit;
     registerDef(entry);

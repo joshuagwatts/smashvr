@@ -5,20 +5,20 @@
 // knockback math (kb.js).
 
 import * as THREE from 'three';
-import { createFighter } from './fighters.js?v=50';
-import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=50';
-import { STRIKE_LIMB } from './moves.js?v=50';
+import { createFighter } from './fighters.js?v=51';
+import { tickFighterVisual, attackPose, poseStrikeSkeleton, strikeTip, ledgeAttackEuler } from './anim.js?v=51';
+import { STRIKE_LIMB } from './moves.js?v=51';
 import {
   initFX, hitSpark, koBlast, spawnProjectile,
   updateProjectiles, shieldBubbleAttach, updateShieldBubble, clearFX,
   chargeGlowTick, chargeGlowClear, peekProjectiles,
   setHitFlash, tickHitFlash, speedLines, damageNumber, updateDamageNumbers,
   setVignette,
-} from './fx.js?v=50';
-import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=50';
-import { Input } from './input.js?v=50';
-import { sfx } from './audio.js?v=50';
-import { mulberry32 } from './rng.js?v=50';
+} from './fx.js?v=51';
+import { knockback, hitstunFrames, launchVelocity, TUNING } from './kb.js?v=51';
+import { Input } from './input.js?v=51';
+import { sfx } from './audio.js?v=51';
+import { mulberry32 } from './rng.js?v=51';
 
 export const TICK = 1 / 60; // v0.11: exported for the netplay driver's pacing
 const GRAV = 0.007;             // fall accel, units/frame^2 (rebalanced 2026-10-13:
@@ -104,7 +104,7 @@ function thinkAI(game, f, foe, a) {
   if (offstage) {
     // recover: drift to stage, jump, then up-special
     h[f.x > 0 ? 'left' : 'right'] = true;
-    if (f.y < -0.8 && f.jumpsUsed < 1) {
+    if (f.y < -0.8 && f.jumpsUsed < (f.jumps || 1)) {
       h.jump = true; // held (not a tap) so the jump-squat gives a FULL jump
     } else if (f.y < -2.0 && !a.usedUpB) {
       h.up = true;
@@ -368,6 +368,7 @@ export function createGame(opts) {
     f._grabber = null;
     f._grabDur = 0;
     f._pummelCD = 0;
+    f._blinkUsed = false; // v0.51: MIRAGE air-Blink spent flag (hashed)
     f._rollDir = 1;
     f._squatAir = false;
     scene.add(f.root);
@@ -627,6 +628,7 @@ export function createGame(opts) {
           f._pendT || 0, f._chargeDir || '-', f._chargeBtn || 'smash', f._landLagT || 0,
           f._grabber ? f._grabber.slot : -1, f._victim ? f._victim.slot : -1,
           f._grabDur || 0, f._grabConnected ? 1 : 0, f._pummelCD || 0,
+          f._blinkUsed ? 1 : 0, // v0.51: teleport state is gameplay state
           f._rollDir || 0, f._hitstunDur || 0,
           f._aiPersonality || '', ai.cool || 0, pk(ai.hold),
           Object.keys(ai.tap || {}).sort().join('+'),
@@ -1051,6 +1053,7 @@ function land(game, f, gy, plat) {
   f.y = gy; f.vy = 0;
   f.onGround = true; f._plat = plat || null;
   f.jumpsUsed = 0;
+  f._blinkUsed = false; // v0.51: MIRAGE's air Blink re-arms on landing
   f._canGrabLedge = true; // v0.3: re-arm the ledge grab on every landing
   if (f._ai) f._ai.usedUpB = false;
   // v0.18: squash & stretch — land with a squash (impact), scale by fall speed.
@@ -1185,7 +1188,8 @@ function stepControl(game, f, e) {
       return;
     }
     // v0.3 jump-squat: 3 ticks, then full or short hop by jump held at the end
-    if (!f.onGround && f.jumpsUsed >= 1) return; // no double jump left
+    // v0.51: the air-jump cap reads the fighter's def (MIRAGE jumps=2).
+    if (!f.onGround && f.jumpsUsed >= (f.jumps || 1)) return; // no air jumps left
     f._squatAir = !f.onGround;
     setState(f, 'squat');
     return;
@@ -1336,27 +1340,36 @@ function checkWin(game) {
   }
 }
 
+// v0.51: the grab connect, shared by the normal grab (stepGrab) and
+// TITAN's command grab (stepAttack 'cmdgrab') — one flow: the foe enters
+// 'grabbed', the grabber enters 'holding', pummel/throws take it from here.
+function grabConnect(f, foe, gx, gy) {
+  f._grabConnected = true;
+  f._victim = foe; foe._grabber = f;
+  exitShieldMesh(foe);
+  clearChargeFx(foe); // a grabbed charger loses the charge (tone + glow)
+  foe.vx = 0; foe.vy = 0; foe.hitPause = 0;
+  setState(foe, 'grabbed');
+  setState(f, 'holding');
+  // mash-out clock: 100 ticks + ~0.9 per percent point on the victim
+  f._grabDur = Math.round(100 + foe.percent * 0.9);
+  f._pummelCD = 0;
+  hitSpark(gx, gy, f.theme, 0.3);
+  sfx.hit(0.25);
+}
+
 function stepGrab(game, f, e, foes) {
   const sf = f.stateFrame;
   // active grab box ticks 4-9: in front, range ~1.3u. v0.9: checks every
   // opponent, grabs the first hittable one in range.
+  // v0.51: grabRangeMul (TITAN 1.3) stretches the reach + box.
   if (sf >= 4 && sf <= 9 && !f._grabConnected) {
-    const gx = f.x + f.facing * 1.3, gy = f.y + 0.6;
+    const gm = f.grabRangeMul || 1;
+    const gx = f.x + f.facing * 1.3 * gm, gy = f.y + 0.6;
     for (const foe of foes) {
       if (!hittable(foe)) continue;
-      if (rectsOverlap(gx, gy, 1.0, 1.2, foe.x, foe.y + foe._hurtH / 2, foe._hurtW, foe._hurtH)) {
-        f._grabConnected = true;
-        f._victim = foe; foe._grabber = f;
-        exitShieldMesh(foe);
-        clearChargeFx(foe); // a grabbed charger loses the charge (tone + glow)
-        foe.vx = 0; foe.vy = 0; foe.hitPause = 0;
-        setState(foe, 'grabbed');
-        setState(f, 'holding');
-        // mash-out clock: 100 ticks + ~0.9 per percent point on the victim
-        f._grabDur = Math.round(100 + foe.percent * 0.9);
-        f._pummelCD = 0;
-        hitSpark(gx, gy, f.theme, 0.3);
-        sfx.hit(0.25);
+      if (rectsOverlap(gx, gy, 1.0 * gm, 1.2, foe.x, foe.y + foe._hurtH / 2, foe._hurtW, foe._hurtH)) {
+        grabConnect(f, foe, gx, gy);
         return;
       }
     }
@@ -1407,7 +1420,8 @@ function doThrow(game, f, v, which) {
   f._victim = null; v._grabber = null;
   applyHit(game,
     { fighter: f, facing: f.facing, theme: f.theme, kbClass: 'neutral', pow: 1 },
-    v, { dmg: T.dmg, angle: T.angle, baseKB: 45, kbGrowth: 95 },
+    // v0.51: throwMul (TITAN 1.25) — grapplers throw harder.
+    v, { dmg: T.dmg * (f.throwMul || 1), angle: T.angle, baseKB: 45, kbGrowth: 95 },
     v.x, v.y + 1);
   setState(f, 'idle');
 }
@@ -1636,6 +1650,7 @@ function startAttack(f, id) {
   f._hitSet = new Set();
   f._lungeDone = false;
   f._fired = false;
+  f._grabConnected = false; // v0.51: command grabs re-arm per swing
   f._lifts = 0;
   f._chargeMult = 1; // default; the charge release sets the real value after
   f._pendT = 0;      // v0.40: any started attack consumes the tap/hold decision
@@ -1651,7 +1666,7 @@ function endAttack(f) {
   setState(f, f.onGround ? 'idle' : 'fall');
 }
 
-function fireSpecial(f, mv) {
+function fireSpecial(f, mv, e) {
   switch (mv.special) {
     case 'fireball':
       { const p = spawnProjectile(f, mv, f.x + f.facing * 0.8, f.y + 1.1, f.facing);
@@ -1673,6 +1688,42 @@ function fireSpecial(f, mv) {
     case 'punch':
       f.vx += f.facing * 0.12;
       break;
+    case 'cmdgrab':
+      // v0.51: TITAN's command grab lunges at the startup frame; the
+      // connect check itself runs in stepAttack over the active window.
+      f.vx += f.facing * 0.22;
+      break;
+    case 'blink': {
+      // v0.51: MIRAGE Blink — teleport 3.2u toward the held direction
+      // (facing when neutral), 12 ticks intangible, once per airtime.
+      if (!f.onGround && f._blinkUsed) break; // spent — the move just plays out
+      let bx = e ? (e.right ? 1 : 0) - (e.left ? 1 : 0) : 0;
+      let by = e ? (e.up ? 1 : 0) - (e.down ? 1 : 0) : 0;
+      if (bx === 0 && by === 0) bx = f.facing;
+      const len = Math.hypot(bx, by) || 1;
+      bx /= len; by /= len;
+      hitSpark(f.x, f.y + 1, f.theme, 0.35); // vanish puff
+      f.x += bx * 3.2;
+      f.y += by * 3.2;
+      // stage-clamped: never land inside/past the stage slab or floor
+      f.x = Math.max(STAGE.x0, Math.min(STAGE.x1, f.x));
+      if (f.x >= STAGE.x0 && f.x <= STAGE.x1 && f.y < 0) f.y = 0;
+      f.vx = 0; f.vy = 0;
+      f.invuln = Math.max(f.invuln, 12);
+      if (!f.onGround) f._blinkUsed = true;
+      hitSpark(f.x, f.y + 1, f.theme, 0.35); // arrival puff
+      break;
+    }
+    case 'blinkup': {
+      // v0.51: MIRAGE Blink Rise — teleport up 3.4u + 1.2u toward facing;
+      // the move ends into helpless (see stepAttack's end-of-move rule).
+      hitSpark(f.x, f.y + 1, f.theme, 0.35);
+      f.x = Math.max(STAGE.x0, Math.min(STAGE.x1, f.x + f.facing * 1.2));
+      f.y += 3.4;
+      f.vx = 0; f.vy = 0; f.onGround = false;
+      hitSpark(f.x, f.y + 1, f.theme, 0.35);
+      break;
+    }
   }
 }
 
@@ -1682,7 +1733,22 @@ function stepAttack(game, f, e, foes) {
   f.moveFrame++;
   const mf = f.moveFrame;
 
-  if (mf === mv.startup && !f._fired) { f._fired = true; fireSpecial(f, mv); }
+  if (mf === mv.startup && !f._fired) { f._fired = true; fireSpecial(f, mv, e); }
+
+  // v0.51: command grab — during the active window, connect like stepGrab
+  // (a ~1.7u box in front) into the holding/grabbed flow. Whiff = the move
+  // plays out its full (long) recovery.
+  if (mv.special === 'cmdgrab' && !f._grabConnected && mf >= mv.startup && mf < mv.startup + mv.active) {
+    const gx = f.x + f.facing * 1.7, gy = f.y + 0.6;
+    for (const foe of foes) {
+      if (!hittable(foe)) continue;
+      if (rectsOverlap(gx, gy, 1.1, 1.2, foe.x, foe.y + foe._hurtH / 2, foe._hurtW, foe._hurtH)) {
+        f.moveId = null; // leaving the attack — 'holding' takes over
+        grabConnect(f, foe, gx, gy);
+        return;
+      }
+    }
+  }
 
   if (!f._lungeDone && mv.lunge && mv.hits.some((h) => mf >= h.from)) {
     f.vx += mv.lunge[0] * f.facing;
@@ -1704,7 +1770,9 @@ function stepAttack(game, f, e, foes) {
     f.root.position.set(f.x, f.y + hoverBob(f), 0);
     f.root.scale.set(f._modScale * f.facing, f._modScale, f._modScale); // v0.10 scale mods
     poseStrikeSkeleton(f, attackPose(mv, mf));
-    const tip = strikeTip(f, STRIKE_LIMB[mv.id], h);
+    // v0.51: a hit may name its own striking limb (SABER's tipper rides
+    // the blade-tip bone); otherwise the move's STRIKE_LIMB rules.
+    const tip = strikeTip(f, h.limb || STRIKE_LIMB[mv.id], h);
     // Bone unavailable (shouldn't happen on procedural rigs; VRM optionals):
     // fall back to the design anchor.
     const hx = tip ? tip.x : f.x + h.dx * f.facing;
@@ -1738,7 +1806,7 @@ function stepAttack(game, f, e, foes) {
   }
 
   if (f.moveFrame >= mv.total) {
-    if (mv.special === 'rise' || mv.special === 'divegrab') setState(f, 'helpless');
+    if (mv.special === 'rise' || mv.special === 'divegrab' || mv.special === 'blinkup') setState(f, 'helpless');
     else endAttack(f);
   }
 }
@@ -2009,6 +2077,7 @@ function checkBlast(game, f) {
       f.percent = 0; f.invuln = 120; f.onGround = false;
       f.shieldHP = SHIELD_MAX; f.hitPause = 0;
       f.moveId = null;
+      f._blinkUsed = false; // v0.51: fresh stock, fresh Blink
       setState(f, 'respawn');
     } else {
       setState(f, 'dead');

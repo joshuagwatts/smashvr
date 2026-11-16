@@ -54,8 +54,8 @@ try {
   // --- fighter select ---
   await page.click('#btn-1p');
   await page.waitForFunction(() => !document.getElementById('screen-select').classList.contains('hidden'), { timeout: 10000 });
-  const cards = await page.locator('#fighter-cards .fcard').count();
-  const slots = await page.locator('#slot-strip .slot').count();
+  const cards = await page.locator('#fighter-cards .tile').count();
+  const slots = await page.locator('#slot-strip .tray').count();
   check('fighter select cards rendered', cards >= 3 && slots === 8, `${cards} cards, ${slots} slots`);
   await page.screenshot({ path: '/home/hatch/workspace/smashvrm/verify/select.png' });
 

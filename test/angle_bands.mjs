@@ -20,6 +20,7 @@ const BANDS = {
 const MOVE_BANDS = {
   volt_dspecial: [[290, 310]],
   wisp_dspecial: [[290, 310]],
+  titan_dspecial: [[290, 310]], // v0.51: titan runs the volt kit's divekick
 };
 
 let failures = 0;

@@ -3,7 +3,7 @@
 // (startup/active/total/damage/angle/KB) is recreated from public frame data.
 // Imports only budget.js (pure) — no three.js here.
 
-import { moveCost } from './budget.js?v=50';
+import { moveCost } from './budget.js?v=51';
 
 export const FIGHTER_DEFS = {
   ronin: {
@@ -53,6 +53,40 @@ export const FIGHTER_DEFS = {
     jumpV: 0.24, djumpV: 0.21, traction: 0.6,
     theme: { primary: '#a855f7', secondary: '#ec4899' },
     altTheme: { primary: '#22d3ee', secondary: '#f0abfc' },
+  },
+  // v0.51: TITAN — grappler. The heaviest fighter on the roster: slow feet,
+  // iron hands. Runs a slower/heavier VOLT clone plus a command grab, a
+  // longer normal grab (grabRangeMul) and harder throws (throwMul) — the
+  // engine reads both multipliers with || 1 defaults, so every other
+  // fighter is untouched.
+  titan: {
+    name: 'TITAN', cls: 'heavy', bodyType: 'biped',
+    weight: 124, runSpeed: 0.105, airSpeed: 0.105, fallSpeed: 0.30, fastFall: 0.54,
+    jumpV: 0.205, djumpV: 0.185, traction: 0.5,
+    grabRangeMul: 1.3, throwMul: 1.25,
+    theme: { primary: '#d4692e', secondary: '#454f61' },
+    altTheme: { primary: '#2e86d4', secondary: '#cfd8e3' },
+  },
+  // v0.51: SABER — duelist. A blade fighter on the RONIN kit: same frames,
+  // longer reach, and TIPPER hitboxes on the thrust moves — the blade's
+  // tip hits harder than its base.
+  saber: {
+    name: 'SABER', cls: 'mid', bodyType: 'biped',
+    weight: 98, runSpeed: 0.135, airSpeed: 0.115, fallSpeed: 0.24, fastFall: 0.45,
+    jumpV: 0.225, djumpV: 0.20, traction: 0.6,
+    theme: { primary: '#dfe6ee', secondary: '#31517d' },
+    altTheme: { primary: '#ffd166', secondary: '#7d3131' },
+  },
+  // v0.51: MIRAGE — trickster. Light and floaty on the BLITZ kit, weaker
+  // per hit, but jumps=2 (two midair jumps) and both vertical specials are
+  // teleports: Blink (neutral) and Blink Rise (up).
+  mirage: {
+    name: 'MIRAGE', cls: 'light', bodyType: 'biped',
+    weight: 86, runSpeed: 0.155, airSpeed: 0.15, fallSpeed: 0.19, fastFall: 0.40,
+    jumpV: 0.23, djumpV: 0.205, traction: 0.6,
+    jumps: 2,
+    theme: { primary: '#2ee6c8', secondary: '#7a4fd0' },
+    altTheme: { primary: '#ffd166', secondary: '#2e6bd4' },
   },
 };
 
@@ -115,6 +149,18 @@ for (const s of SLOTS) STRIKE_LIMB['blitz_' + s] = STRIKE_LIMB['ronin_' + s];
 
 // v0.25: spectre uses ronin limb mapping (cloned kit).
 for (const s of SLOTS) STRIKE_LIMB['spectre_' + s] = STRIKE_LIMB['ronin_' + s];
+
+// v0.51: titan uses volt limb mapping (cloned kit).
+for (const s of SLOTS) STRIKE_LIMB['titan_' + s] = STRIKE_LIMB['volt_' + s];
+
+// v0.51: saber uses ronin limb mapping — except ftilt, which is a blade
+// THRUST (hand strike), not ronin's kick. The tipper hitboxes on
+// fsmash/fair/ftilt carry their own per-hit limb ('saberTip').
+for (const s of SLOTS) STRIKE_LIMB['saber_' + s] = STRIKE_LIMB['ronin_' + s];
+STRIKE_LIMB['saber_ftilt'] = 'handR';
+
+// v0.51: mirage uses blitz limb mapping (cloned kit).
+for (const s of SLOTS) STRIKE_LIMB['mirage_' + s] = STRIKE_LIMB['blitz_' + s];
 
 // v0.7: floaters have no legs — their kick-family moves are body attacks.
 // Leg limbs redirect to the torso for hitbox generation (and the wisp anim
@@ -820,4 +866,169 @@ spectre.fsmash = mv('spectre', 'fsmash', {
   anim: [K(0, 'NEUTRAL'), K(10 / 50, 'BIG_WINDUP'), K(12 / 50, 'FIREBALL'), K(16 / 50, 'FIREBALL'), K(1, 'NEUTRAL')],
 });
 
-export const MOVES = { ronin, volt, wisp, bruiser, blitz, spectre };
+// ---------------------------------------------------------------------------
+// v0.51: TITAN — grappler kit. Cloned from volt, retuned slower/heavier:
+// +4 total (frame numbers scale with the new total, preserving strike
+// keyframe fractions — the blitz/spectre clone pattern), 1.15x damage,
+// 1.1x baseKB. dsmash keeps volt timing (the clone-pattern rule — only
+// damage/KB retune). sspecial is authored fresh: a COMMAND GRAB.
+// ---------------------------------------------------------------------------
+const TITAN_NAMES = {
+  jab: 'Titan Jab', ftilt: 'Shoulder Slam', utilt: 'Iron Uppercut', dtilt: 'Quake Sweep',
+  fsmash: 'Seismic Kick', usmash: 'Thunder Slam', dsmash: 'Tectonic Pound',
+  nair: 'Titan Spin', fair: 'Knee Crush', bair: 'Reverse Slam',
+  uair: 'Sky Slam', dair: 'Meteor Slam', nspecial: 'Titan Punch',
+  sspecial: 'Seismic Snatch', uspecial: 'Titan Dive', dspecial: 'Quake Kick',
+};
+const titan = {};
+for (const slot of SLOTS) {
+  const src = volt[slot];
+  if (!src) continue;
+  if (slot === 'dsmash') {
+    titan[slot] = {
+      ...src, id: 'titan_dsmash', name: TITAN_NAMES.dsmash,
+      hits: src.hits.map((h) => ({ ...h, dmg: Math.max(1, Math.round(h.dmg * 1.15)), baseKB: h.baseKB * 1.1 })),
+    };
+    titan[slot].cost = moveCost(titan[slot].hits.reduce((s, h) => s + h.dmg, 0), src.startup, src.kbClass);
+    continue;
+  }
+  const newTotal = src.total + 4;
+  const sc = newTotal / src.total;
+  const q = (f) => Math.max(1, Math.round(f * sc));
+  const newHits = src.hits.map((h) => ({
+    ...h,
+    from: q(h.from),
+    to: Math.max(q(h.from), q(h.to)),
+    dmg: Math.max(1, Math.round(h.dmg * 1.15)),
+    baseKB: h.baseKB * 1.1,
+  }));
+  const oldStrikeT = src.hits.map((h) => h.from / src.total);
+  const newStrikeT = newHits.map((h) => h.from / newTotal);
+  const anim = src.anim.map((k) => {
+    const idx = oldStrikeT.findIndex((st) => Math.abs(k.t - st) < 1e-9);
+    return { t: idx >= 0 ? newStrikeT[idx] : k.t, bones: { ...k.bones } };
+  });
+  titan[slot] = {
+    ...src,
+    id: 'titan_' + slot,
+    name: TITAN_NAMES[slot] || src.name,
+    startup: Math.max(2, q(src.startup)),
+    total: newTotal,
+    cancelFrom: src.cancelFrom ? Math.max(2, q(src.cancelFrom)) : null,
+    anim,
+    hits: newHits,
+    cost: moveCost(newHits.reduce((s, h) => s + h.dmg, 0), Math.max(2, q(src.startup)), src.kbClass),
+  };
+}
+// v0.51: the command grab — a lunging grab with NO damage hitboxes. During
+// its active window the engine checks opponents like stepGrab does
+// (~1.7u box); a connect enters the holding/grabbed flow (pummel + throws
+// work unchanged, at titan's throwMul). A whiff plays the full 64 ticks —
+// very punishable, as a grappler's whiff should be.
+titan.sspecial = mv('titan', 'sspecial', {
+  name: 'Seismic Snatch', startup: 16, active: 6, total: 64, kbClass: 'neutral', special: 'cmdgrab',
+  hits: [],
+  anim: [K(0, 'NEUTRAL'), K(15 / 64, 'CROUCH'), K(16 / 64, 'GRAB_ATTEMPT'), K(22 / 64, 'GRAB_ATTEMPT'), K(1, 'NEUTRAL')],
+});
+
+// ---------------------------------------------------------------------------
+// v0.51: SABER — duelist kit. Cloned from ronin with IDENTICAL frame data;
+// the blade buys reach instead: hitboxes on arm's-length moves grow 1.25x,
+// and the three thrust moves (ftilt/fsmash/fair) carry a TIPPER — a second
+// hitbox riding the blade's tip bone ('saberTip', per-hit limb) that hits
+// harder than the now-weaker inner hit. Tip first in the hits array: at
+// tip range the tipper wins the overlap (one hit per swing, _hitSet).
+// Tip anchor (1.32, 0.85) measured on the saber rig at the PUNCH_R strike
+// pose (hand at ~(0.76, 1.10), blade tip at ~(1.32, 0.85)).
+// ---------------------------------------------------------------------------
+const SABER_NAMES = {
+  jab: 'Riposte', ftilt: 'Lunge Thrust', utilt: 'Rising Edge', dtilt: 'Low Slash',
+  fsmash: 'Grand Thrust', usmash: 'Skybrand', dsmash: 'Whirlwind Blade',
+  nair: 'Cyclone Edge', fair: 'Comet Thrust', bair: 'Reverse Cut',
+  uair: 'Helm Cleaver', dair: 'Drill Edge', nspecial: 'Arc Brand',
+  sspecial: 'Cyclone Brand', uspecial: 'Rising Brand', dspecial: 'Blade Storm',
+};
+const SABER_ARM_SLOTS = new Set(['jab', 'ftilt', 'utilt', 'fsmash', 'usmash', 'fair', 'bair', 'uair', 'uspecial']);
+const saber = {};
+for (const slot of SLOTS) {
+  const src = ronin[slot];
+  if (!src) continue;
+  const grow = SABER_ARM_SLOTS.has(slot) ? 1.25 : 1;
+  const hits = src.hits.map((h) => ({ ...h, w: h.w * grow, h: h.h * grow }));
+  saber[slot] = { ...src, id: 'saber_' + slot, name: SABER_NAMES[slot] || src.name, hits };
+}
+// ftilt becomes a blade thrust: same frame window as ronin's kick, thrust
+// poses on the same keyframe fractions (the strike key stays exact).
+saber.ftilt = {
+  ...saber.ftilt,
+  anim: [K(0, 'NEUTRAL'), K(5 / 30, 'WINDUP_R'), K(6 / 30, 'PUNCH_R'), K(10 / 30, 'PUNCH_R'), K(1, 'NEUTRAL')],
+  hits: [
+    { ...H(1.32, 0.85, 0.55, 0.5, 16, 35, 40, 100, 6, 10), limb: 'saberTip' },
+    H(0.85, 1.05, 1.1, 0.85, 10, 35, 32, 85, 6, 10),
+  ],
+};
+saber.ftilt.cost = moveCost(26, saber.ftilt.startup, saber.ftilt.kbClass);
+saber.fsmash = {
+  ...saber.fsmash,
+  hits: [
+    { ...H(1.32, 0.85, 0.55, 0.5, 22, 35, 52, 125, 12, 16), limb: 'saberTip' },
+    H(0.85, 1.05, 1.125, 0.75, 14, 35, 40, 100, 12, 16),
+  ],
+};
+saber.fsmash.cost = moveCost(36, saber.fsmash.startup, saber.fsmash.kbClass);
+saber.fair = {
+  ...saber.fair,
+  hits: [
+    { ...H(1.32, 0.85, 0.55, 0.5, 19, 20, 46, 115, 14, 20), limb: 'saberTip' },
+    H(0.8, 1.15, 0.95, 0.75, 12, 20, 36, 95, 14, 20),
+  ],
+};
+saber.fair.cost = moveCost(31, saber.fair.startup, saber.fair.kbClass);
+
+// ---------------------------------------------------------------------------
+// v0.51: MIRAGE — trickster kit. Cloned from blitz (frame data untouched —
+// fractions trivially preserved), retuned weaker: 0.85x damage, 0.9x
+// baseKB. The floatiness lives in the def (light, slow fall, jumps=2).
+// nspecial/uspecial are authored fresh: teleports, no hitboxes.
+// ---------------------------------------------------------------------------
+const MIRAGE_NAMES = {
+  jab: 'Phantom Flurry', ftilt: 'Ghost Kick', utilt: 'Snap Mirage', dtilt: 'Ankle Mirage',
+  fsmash: 'Blur Mirage', usmash: 'Sky Mirage', dsmash: 'Cyclone Mirage',
+  nair: 'Phantom Spin', fair: 'Dart Mirage', bair: 'Heel Mirage',
+  uair: 'Helm Mirage', dair: 'Dive Mirage', nspecial: 'Blink',
+  sspecial: 'Phantom Cyclone', uspecial: 'Blink Rise', dspecial: 'Phantom Tornado',
+};
+const mirage = {};
+for (const slot of SLOTS) {
+  const src = blitz[slot];
+  if (!src) continue;
+  const hits = src.hits.map((h) => ({
+    ...h,
+    dmg: Math.max(1, Math.round(h.dmg * 0.85)),
+    baseKB: h.baseKB * 0.9,
+  }));
+  mirage[slot] = {
+    ...src,
+    id: 'mirage_' + slot,
+    name: MIRAGE_NAMES[slot] || src.name,
+    hits,
+    cost: moveCost(hits.reduce((s, h) => s + h.dmg, 0) + (src.projectile ? src.projectile.dmg : 0), src.startup, src.kbClass),
+  };
+}
+// v0.51: Blink — teleport 3.2u toward the held direction (or facing),
+// stage-clamped, 12 ticks of intangibility, once per airtime (engine:
+// fireSpecial 'blink', f._blinkUsed). No hitbox — pure repositioning.
+mirage.nspecial = mv('mirage', 'nspecial', {
+  name: 'Blink', startup: 6, active: 2, total: 26, kbClass: 'weak', special: 'blink',
+  hits: [],
+  anim: [K(0, 'NEUTRAL'), K(5 / 26, 'CROUCH'), K(6 / 26, 'DASH_POSE'), K(12 / 26, 'DASH_POSE'), K(1, 'NEUTRAL')],
+});
+// v0.51: Blink Rise — teleport up 3.4u and 1.2u toward facing, then
+// helpless (the recovery). Engine: fireSpecial 'blinkup'.
+mirage.uspecial = mv('mirage', 'uspecial', {
+  name: 'Blink Rise', startup: 5, active: 2, total: 40, kbClass: 'weak', special: 'blinkup',
+  hits: [],
+  anim: [K(0, 'NEUTRAL'), K(4 / 40, 'CROUCH'), K(5 / 40, 'RISE_B'), K(14 / 40, 'RISE_B'), K(1, 'NEUTRAL')],
+});
+
+export const MOVES = { ronin, volt, wisp, bruiser, blitz, spectre, titan, saber, mirage };

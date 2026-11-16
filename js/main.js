@@ -2,23 +2,24 @@
 // fight -> pause/results), HUD rendering, VRM import, Fighter Lab overlay.
 
 import * as THREE from 'three';
-import { createGame } from './engine.js?v=50';
-import { Input } from './input.js?v=50';
-import { sfx } from './audio.js?v=50';
-import { createFighter } from './fighters.js?v=50';
-import { FIGHTER_DEFS } from './moves.js?v=50';
-import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=50';
-import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=50';
-import { openLab } from './lab.js?v=50';
-import { getPortrait, preRenderPortraits } from './portrait.js?v=50';
-import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=50';
+import { createGame } from './engine.js?v=51';
+import { Input } from './input.js?v=51';
+import { sfx } from './audio.js?v=51';
+import { createFighter } from './fighters.js?v=51';
+import { FIGHTER_DEFS, MOVES, SLOTS } from './moves.js?v=51';
+import { ARCHETYPES, archetypeForDef } from './archetypes.js?v=51';
+import { attachVRMToFighter, removeVRMFromFighter } from './vrm.js?v=51';
+import { initRoster, isCustom, listCustoms, importCharacter, getCharacterData, getCustomEntry } from './roster.js?v=51';
+import { openLab } from './lab.js?v=51';
+import { getPortrait, preRenderPortraits } from './portrait.js?v=51';
+import { lastSpark, lastSpeedLines, dmgNumCount, fxCount } from './fx.js?v=51';
 import {
   STAGES, createCampaignManager, loadProgress, recordClear,
-} from './campaign.js?v=50';
+} from './campaign.js?v=51';
 import {
   createNetTransport, Lobby, NetDriver, sampleLocalInput, lobbyCode, getRtcConfig,
-} from './netplay.js?v=50';
-import { TouchUI } from './touchui.js?v=50';
+} from './netplay.js?v=51';
+import { TouchUI } from './touchui.js?v=51';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -174,45 +175,75 @@ function activeSlots() {
   return slots.filter((s) => s.ctrl !== 'closed');
 }
 
+// v0.51: classic fighter select — grid tiles, player trays, detail panel.
+// PORT_COLORS mirrors engine.js (P1 red, P2 blue, ...): trays highlight in
+// their player color.
+const PLAYER_COLORS = ['#ff3b30', '#0a84ff', '#ffcc00', '#30d158', '#bf5af2', '#ff9f0a', '#64d2ff', '#ff375f'];
+let gridTiles = [];   // tile elements in grid order (incl. the RANDOM tile)
+let cursorIdx = 0;    // keyboard cursor position in gridTiles
+
+function assignToSlot(defId) {
+  slots[selSlot].def = defId;
+  if (slots[selSlot].ctrl === 'p1') saveP1Pick(defId); // v0.45: remember P1's fighter
+  refreshSelect();
+}
+
 function defCard(defId) {
-  // Build from the live fighter def so class + theme swatch always match.
+  // v0.51: a grid TILE — portrait fills the tile, name banner across the
+  // bottom, archetype label under it. Same assignment semantics as the
+  // old cards: click assigns to the selected slot.
   let f = null;
   try { f = createFighter(defId); } catch (e) { /* fighter half not landed yet */ }
   const el = document.createElement('div');
-  el.className = 'fcard' + (slots[selSlot].def === defId ? ' sel' : '');
+  el.className = 'tile' + (slots[selSlot].def === defId ? ' sel' : '');
   el.dataset.def = defId;
   const def = FIGHTER_DEFS[defId];
-  const cls = f ? f.cls.toUpperCase() : '?';
-  // v0.6: body type on the card so floaters are visible at select time.
-  // v0.7: custom slots show their name + CUSTOM tag.
-  const bt = f ? (f.bodyType === 'floater' ? ' · FLOATER' : '') : '';
-  const customTag = def && def.custom ? ' · CUSTOM' : '';
+  const arch = archetypeForDef(defId, def);
   const c1 = f ? '#' + new THREE.Color(f.theme.primary).getHexString() : '#555';
   const c2 = f ? '#' + new THREE.Color(f.theme.secondary).getHexString() : '#777';
-  // v0.17: Smash-style portrait. Async — card renders with the swatch first,
+  // v0.17: Smash-style portrait. Async — tile renders with the swatch first,
   // portrait swaps in when the offscreen render lands (cached after first).
   const pname = def && def.custom ? def.name : defId.toUpperCase();
-  el.innerHTML = `<div class="fname">${pname}</div>
-    <div class="fportrait"><div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})${def && def.custom ? ';border:1px dashed #9aa3b2' : ''}"></div></div>
-    <div class="fclass">${cls}${bt}${customTag}</div>`;
+  el.innerHTML = `<div class="tportrait"><div class="swatch" style="background:linear-gradient(135deg,${c1},${c2})${def && def.custom ? ';border:1px dashed #9aa3b2' : ''}"></div></div>
+    <div class="tname">${pname}</div>
+    <div class="tarch">${arch ? arch.label : ''}${def && def.custom ? ' · CUSTOM' : ''}</div>`;
   getPortrait(defId).then((url) => {
     if (!url || !el.isConnected) return;
-    const wrap = el.querySelector('.fportrait');
+    const wrap = el.querySelector('.tportrait');
     if (wrap) wrap.innerHTML = `<img src="${url}" alt="${pname}" draggable="false">`;
   }).catch(() => {});
   el.addEventListener('click', () => {
     sfx.uiMove();
-    slots[selSlot].def = defId;
-    if (slots[selSlot].ctrl === 'p1') saveP1Pick(defId); // v0.45: remember P1's fighter
-    refreshSelect();
+    cursorIdx = gridTiles.indexOf(el);
+    assignToSlot(defId);
+  });
+  return el;
+}
+
+function randomTile() {
+  const el = document.createElement('div');
+  el.className = 'tile random';
+  el.dataset.def = '__random';
+  el.innerHTML = `<div class="tportrait"><div class="qmark">?</div></div>
+    <div class="tname">RANDOM</div>
+    <div class="tarch">???</div>`;
+  el.addEventListener('click', () => {
+    sfx.uiMove();
+    cursorIdx = gridTiles.indexOf(el);
+    const all = Object.keys(FIGHTER_DEFS);
+    assignToSlot(all[Math.floor(Math.random() * all.length)]);
   });
   return el;
 }
 
 function slotCard(i) {
+  // v0.51: a player TRAY — P-number in its player color, portrait mini,
+  // fighter name, controller badge, team dot. Handlers unchanged from the
+  // old slot cards.
   const s = slots[i];
   const el = document.createElement('div');
-  el.className = 'slot' + (i === selSlot ? ' sel' : '') + (s.ctrl === 'closed' ? ' closed' : '');
+  el.className = 'tray' + (i === selSlot ? ' sel' : '') + (s.ctrl === 'closed' ? ' closed' : '');
+  el.style.setProperty('--pcol', PLAYER_COLORS[i % PLAYER_COLORS.length]);
   const teamCls = s.team ? ' team-' + s.team : '';
   const ctrlBtn = document.createElement('button');
   ctrlBtn.className = 'slot-ctrl';
@@ -242,16 +273,83 @@ function slotCard(i) {
     s.team = TEAMS[(TEAMS.indexOf(s.team) + 1) % TEAMS.length];
     refreshSelect();
   });
-  const nm = document.createElement('div');
-  nm.className = 'slot-name';
+  const head = document.createElement('div');
+  head.className = 'tray-head';
+  head.innerHTML = `<span class="tray-pnum">P${i + 1}</span>`;
+  head.appendChild(teamBtn);
+  const mini = document.createElement('div');
+  mini.className = 'tray-mini';
   let dispName = s.def.toUpperCase();
   try { const d = FIGHTER_DEFS[s.def]; dispName = d && d.custom ? d.name : s.def.toUpperCase(); } catch (e) {}
-  nm.textContent = `S${i + 1} · ${dispName}`;
+  getPortrait(s.def).then((url) => {
+    if (!url || !mini.isConnected) return;
+    mini.innerHTML = `<img src="${url}" alt="${dispName}" draggable="false">`;
+  }).catch(() => {});
+  const nm = document.createElement('div');
+  nm.className = 'slot-name';
+  nm.textContent = dispName;
+  el.appendChild(head);
+  el.appendChild(mini);
   el.appendChild(nm);
   el.appendChild(ctrlBtn);
-  el.appendChild(teamBtn);
   el.addEventListener('click', () => { sfx.uiMove(); selSlot = i; refreshSelect(); });
   return el;
+}
+
+// v0.51: detail-panel stat bars. Honest, simple, documented:
+//   POWER  — the fighter's kit total damage (every hit + projectile),
+//            linearly mapped from the roster's observed range 120..280.
+//   SPEED  — ground run speed, mapped 0.10..0.18.
+//   WEIGHT — the def's weight, mapped 75..130.
+//   AIR    — mean of normalized air speed (0.10..0.155), jump velocity
+//            (0.19..0.25) and inverse fall speed (0.15..0.32).
+// Customs read their effective def (archetype physics already applied by
+// roster.registerDef) and their assigned kit.
+function fighterStats(defId) {
+  const def = FIGHTER_DEFS[defId];
+  if (!def) return null;
+  const kit = MOVES[def.custom ? def.kit : defId] || {};
+  let dmg = 0;
+  for (const s of SLOTS) {
+    const mv = kit[s];
+    if (!mv) continue;
+    dmg += mv.hits.reduce((x, h) => x + h.dmg, 0) + (mv.projectile ? mv.projectile.dmg : 0);
+  }
+  const n = (v, lo, hi) => Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  return {
+    power: n(dmg, 120, 280),
+    speed: n(def.runSpeed, 0.10, 0.18),
+    weight: n(def.weight, 75, 130),
+    air: (n(def.airSpeed, 0.10, 0.155) + n(def.jumpV, 0.19, 0.25) + (1 - n(def.fallSpeed, 0.15, 0.32))) / 3,
+  };
+}
+
+function updateDetail() {
+  const panel = $('sel-detail');
+  if (!panel) return;
+  const s = slots[selSlot];
+  const def = FIGHTER_DEFS[s.def];
+  if (!def) { panel.innerHTML = ''; return; }
+  const arch = archetypeForDef(s.def, def);
+  const st = fighterStats(s.def);
+  const pname = def.custom ? def.name : s.def.toUpperCase();
+  const bt = def.bodyType === 'floater' ? ' · FLOATER' : '';
+  const bar = (label, v) => `<div class="stat"><span>${label}</span><div class="stat-track"><div class="stat-fill" style="width:${Math.round(v * 100)}%"></div></div></div>`;
+  panel.innerHTML = `
+    <div class="det-pnum" style="color:${PLAYER_COLORS[selSlot % PLAYER_COLORS.length]}">P${selSlot + 1}</div>
+    <div class="det-name">${pname}</div>
+    <div class="det-arch">${arch ? arch.label : ''}</div>
+    <div class="det-tag">${arch ? arch.tagline : ''}</div>
+    <div class="det-class">${def.cls.toUpperCase()} CLASS${bt}${def.custom ? ' · CUSTOM' : ''}</div>
+    <div class="det-stats">
+      ${bar('POWER', st.power)}${bar('SPEED', st.speed)}${bar('WEIGHT', st.weight)}${bar('AIR', st.air)}
+    </div>`;
+}
+
+function applyCursor() {
+  gridTiles.forEach((t, i) => t.classList.toggle('cursor', i === cursorIdx));
+  const t = gridTiles[cursorIdx];
+  if (t) t.scrollIntoView({ block: 'nearest' });
 }
 
 function refreshSelect() {
@@ -260,28 +358,67 @@ function refreshSelect() {
   slots.forEach((s, i) => strip.appendChild(slotCard(i)));
   const pool = $('fighter-cards');
   pool.innerHTML = '';
-  // v0.7: built-ins first, then the CUSTOM section (imported characters).
+  gridTiles = [];
+  // v0.7: built-ins first, then the CUSTOM section (imported characters) —
+  // v0.51: same grid flow, with a RANDOM tile closing the grid.
   const builtin = [], custom = [];
   for (const d of Object.keys(FIGHTER_DEFS)) {
     (FIGHTER_DEFS[d].custom ? custom : builtin).push(d);
   }
-  for (const d of builtin) pool.appendChild(defCard(d));
+  for (const d of builtin) { const c = defCard(d); pool.appendChild(c); gridTiles.push(c); }
   if (custom.length) {
     const lab = document.createElement('div');
-    lab.className = 'fcard-label';
+    lab.className = 'grid-label';
     lab.textContent = '— CUSTOM —';
     pool.appendChild(lab);
-    for (const d of custom) pool.appendChild(defCard(d));
+    for (const d of custom) { const c = defCard(d); pool.appendChild(c); gridTiles.push(c); }
   }
+  const rt = randomTile();
+  pool.appendChild(rt);
+  gridTiles.push(rt);
+  if (cursorIdx >= gridTiles.length) cursorIdx = 0;
+  applyCursor();
+  updateDetail();
   const n = activeSlots().length;
   $('btn-start').textContent = n >= 2 ? `START FIGHT (${n})` : 'NEED 2+ FIGHTERS';
 }
+
+// v0.51: keyboard cursor for the classic grid — arrows move, Enter assigns
+// to the selected tray, Tab cycles the tray. Mouse/touch stay primary;
+// this only acts while the select screen is up.
+document.addEventListener('keydown', (ev) => {
+  if ($('screen-select').classList.contains('hidden')) return;
+  if (ev.key === 'Tab') {
+    ev.preventDefault();
+    selSlot = (selSlot + (ev.shiftKey ? slots.length - 1 : 1)) % slots.length;
+    sfx.uiMove();
+    refreshSelect();
+    return;
+  }
+  if (!gridTiles.length) return;
+  // column count from the live layout: tiles sharing the first tile's row
+  const top0 = gridTiles[0].offsetTop;
+  let cols = 0;
+  for (const t of gridTiles) { if (t.offsetTop === top0) cols++; else break; }
+  cols = Math.max(1, cols);
+  let moved = true;
+  if (ev.key === 'ArrowLeft') cursorIdx = Math.max(0, cursorIdx - 1);
+  else if (ev.key === 'ArrowRight') cursorIdx = Math.min(gridTiles.length - 1, cursorIdx + 1);
+  else if (ev.key === 'ArrowUp') cursorIdx = Math.max(0, cursorIdx - cols);
+  else if (ev.key === 'ArrowDown') cursorIdx = Math.min(gridTiles.length - 1, cursorIdx + cols);
+  else if (ev.key === 'Enter') {
+    const t = gridTiles[cursorIdx];
+    if (t) { sfx.uiMove(); t.click(); }
+    return;
+  } else moved = false;
+  if (moved) { ev.preventDefault(); sfx.uiMove(); applyCursor(); }
+});
 
 function openSelect(m) {
   mode = m;
   slots = defaultSlots(m);
   selSlot = 0;
-  $('select-title').textContent = m === 'cpu' ? '1P vs CPU — choose fighters' : '2P Versus — battle setup';
+  $('select-mode').textContent = m === 'cpu' ? '1P vs CPU' : '2P Versus';
   // v0.7: customs rebuild from IndexedDB before the cards render
   rosterReady.finally(() => {
     // a custom slot may have been deleted while we were away
